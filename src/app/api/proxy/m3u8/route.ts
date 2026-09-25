@@ -11,6 +11,50 @@ import { DEFAULT_USER_AGENT } from "@/lib/user-agent";
 // m3u8 manifest 响应体大小硬上限，防止异常上游返回超大响应把内存打爆
 const MAX_M3U8_BYTES = 5 * 1024 * 1024; // 5MB
 
+/**
+ * 过滤结果缓存（进程内，best-effort）。
+ * 点播列表内容稳定，但客户端会反复拉取（尤其 TV / 手机端走代理后每一集都要过一遍），
+ * 每次重新解析上千片纯属浪费。直播列表不进缓存——它是滑动窗口，内容一直在变。
+ */
+interface AdFilterCacheEntry {
+  content: string;
+  removed: number;
+  method: string;
+  ts: number;
+}
+const adFilterCache = new Map<string, AdFilterCacheEntry>();
+const AD_FILTER_CACHE_TTL = 5 * 60 * 1000; // 5 分钟
+const AD_FILTER_CACHE_MAX = 300;
+
+function adFilterCacheKey(
+  upstreamUrl: string,
+  sourceKey: string | null,
+  configSig: string
+): string {
+  return `${sourceKey || '-'}::${configSig}::${upstreamUrl}`;
+}
+
+function adFilterCacheGet(key: string): AdFilterCacheEntry | null {
+  const hit = adFilterCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > AD_FILTER_CACHE_TTL) {
+    adFilterCache.delete(key);
+    return null;
+  }
+  // 命中后刷新位置，维持简单的 LRU 顺序
+  adFilterCache.delete(key);
+  adFilterCache.set(key, hit);
+  return hit;
+}
+
+function adFilterCacheSet(key: string, entry: Omit<AdFilterCacheEntry, 'ts'>): void {
+  if (adFilterCache.size >= AD_FILTER_CACHE_MAX) {
+    const oldest = adFilterCache.keys().next().value;
+    if (oldest !== undefined) adFilterCache.delete(oldest);
+  }
+  adFilterCache.set(key, { ...entry, ts: Date.now() });
+}
+
 export const runtime = 'nodejs';
 
 // 连接池管理
@@ -171,7 +215,7 @@ export async function GET(request: Request) {
 
       // 🧹 服务端去广告：先剔除广告分片与广告标记行，再做 URI 改写。
       // 放在改写之前，广告分片就不会被分配代理地址，播放器根本不会去拉取。
-      const adFilter = applyServerAdFilter(m3u8Content, request, config, source);
+      const adFilter = applyServerAdFilter(m3u8Content, request, config, source, decodedUrl);
 
       // 重写 M3U8 内容
       const modifiedContent = rewriteM3U8Content(adFilter.content, baseUrl, request, allowCORS, source);
@@ -189,6 +233,9 @@ export async function GET(request: Request) {
       // 便于排查：本次请求实际剔除的广告分片数与采用的方式
       headers.set('X-Ad-Filter-Removed', String(adFilter.removed || 0));
       headers.set('X-Ad-Filter-Method', adFilter.method || 'none');
+      if (adFilter.cached !== undefined) {
+        headers.set('X-Ad-Filter-Cache', adFilter.cached ? 'hit' : 'miss');
+      }
 
       // 更新性能统计
       const responseTime = Date.now() - startTime;
@@ -284,8 +331,9 @@ function applyServerAdFilter(
   content: string,
   request: Request,
   config: any,
-  sourceKey: string | null
-): { content: string; removed: number; method: string } {
+  sourceKey: string | null,
+  upstreamUrl: string
+): { content: string; removed: number; method: string; cached?: boolean } {
   const sc = config?.SiteConfig || {};
   const isLive = !!sourceKey;
 
@@ -304,11 +352,23 @@ function applyServerAdFilter(
   const maxRatio = typeof sc.ServerAdFilterMaxRemoveRatio === 'number'
     ? Math.min(Math.max(sc.ServerAdFilterMaxRemoveRatio, 0.1), 0.9)
     : 0.5;
+  const customCode = sc.CustomAdFilterCode || '';
+
+  // 自定义代码/阈值变了必须换 key，否则会用旧规则的结果
+  const configSig = `${customCode.length}:${maxRatio}`;
+  const cacheKey = adFilterCacheKey(upstreamUrl, sourceKey, configSig);
+  // 直播列表是滑动窗口，不能缓存
+  const canCache = !isLive;
+
+  if (canCache) {
+    const hit = adFilterCacheGet(cacheKey);
+    if (hit) return { ...hit, cached: true };
+  }
 
   try {
     const result = filterM3U8Ads(content, {
       sourceKey,
-      customCode: sc.CustomAdFilterCode || '',
+      customCode,
       enabled: true,
       maxRemoveRatio: maxRatio,
     });
@@ -319,7 +379,12 @@ function applyServerAdFilter(
       );
     }
 
-    return { content: result.content, removed: result.removed, method: result.method };
+    const out = { content: result.content, removed: result.removed, method: result.method };
+    if (canCache) {
+      adFilterCacheSet(cacheKey, out);
+      return { ...out, cached: false };
+    }
+    return out;
   } catch (error: any) {
     // 过滤失败绝不能影响播放，原样返回
     if (process.env.NODE_ENV === 'development') {

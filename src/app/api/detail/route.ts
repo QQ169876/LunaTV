@@ -313,8 +313,9 @@ export async function GET(request: NextRequest) {
     // 🧹 服务端去广告：把剧集地址改写成本站 m3u8 代理，
     // 这样 TV / 手机等不走网页播放器的客户端拿到的也是过滤后的列表。
     // 默认关闭（ForceProxyPlayback），开启后视频流量会经过本站。
+    // 输出绝对地址：第三方客户端不一定会补全相对路径的域名。
     try {
-      wrapEpisodesWithProxy(result, await getConfig());
+      wrapEpisodesWithProxy(result, await getConfig(), new URL(request.url).origin);
     } catch {
       // 改写失败不影响正常返回
     }

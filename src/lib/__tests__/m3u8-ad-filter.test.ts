@@ -124,4 +124,42 @@ describe('m3u8-ad-filter', () => {
     expect(r.method).toBe('disabled');
     expect(r.content).toBe(raw);
   });
+
+  it('识别被代理地址包裹的广告分片', () => {
+    const wrapped =
+      'https://p.example.com/api/proxy/segment?url=' +
+      encodeURIComponent('https://ad.b.com/ad/x.ts');
+    const raw =
+      '#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:0\n' +
+      '#EXTINF:10.0,\nhttps://cdn.a.com/0.ts\n' +
+      `#EXTINF:10.0,\n${wrapped}\n` +
+      '#EXTINF:10.0,\nhttps://cdn.a.com/1.ts\n#EXT-X-ENDLIST\n';
+    const r = filterM3U8Ads(raw);
+    expect(r.removed).toBe(1);
+    expect(r.content).not.toContain('ad.b.com');
+  });
+
+  it('存在 SCTE35 显式标记时放宽删除比例阈值', () => {
+    // 短列表里广告占比很高（4/6 = 66%），无标记时会被安全阀拦下；
+    // 有显式广告标记说明上游确实插了广告，应当放行过滤。
+    const raw =
+      '#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-MEDIA-SEQUENCE:0\n' +
+      '#EXTINF:10.0,\nhttps://cdn.a.com/vod/0.ts\n' +
+      '#EXT-X-CUE-OUT:30\n' +
+      '#EXT-X-DATERANGE:ID="ad1",SCTE35-OUT=0xFC\n' +
+      '#EXTINF:5.0,广告\nhttps://cdn.a.com/sponsor/ad/b1.ts\n' +
+      '#EXTINF:5.0,\nhttps://cdn.a.com/advert/b2.ts\n' +
+      '#EXTINF:4.0,\nhttps://ad.b.com/ads/x.ts?adjump=1\n' +
+      '#EXTINF:4.0,\nhttps://ad.b.com/promo/y.ts?utm_source=ad\n' +
+      '#EXT-X-CUE-IN\n' +
+      '#EXTINF:10.0,\nhttps://cdn.a.com/vod/1.ts\n' +
+      '#EXT-X-ENDLIST\n';
+    const r = filterM3U8Ads(raw);
+    expect(r.method).toBe('default');
+    expect(r.removed).toBe(4);
+    expect(r.content).toContain('vod/0.ts');
+    expect(r.content).toContain('vod/1.ts');
+    expect(r.content).not.toMatch(/CUE-OUT|CUE-IN|SCTE35/);
+    expect(r.content).not.toContain('ad.b.com');
+  });
 });

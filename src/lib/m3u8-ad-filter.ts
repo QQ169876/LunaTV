@@ -355,6 +355,23 @@ function countRemovedFromHead(segments: Segment[], toRemove: Set<number>): numbe
 }
 
 /**
+ * 列表里是否带显式广告标记（SCTE35 系列）。
+ *
+ * 有显式标记说明上游确实做了广告插入，此时可以放宽删除比例阈值——
+ * 否则短列表（例如只有 6 片、其中 4 片广告）会因为占比过高被安全阀拦下，反而漏删。
+ */
+function hasExplicitAdMarkers(raw: string): boolean {
+  return (
+    /#EXT-X-CUE-OUT/i.test(raw) ||
+    /#EXT-X-CUE-IN/i.test(raw) ||
+    /#EXT-OATCLS-SCTE35/i.test(raw) ||
+    /#EXT-X-SCTE35/i.test(raw) ||
+    /#EXT-X-ASSET/i.test(raw) ||
+    /#EXT-X-DATERANGE[^\n]*SCTE35/i.test(raw)
+  );
+}
+
+/**
  * 内置默认过滤（不含自定义代码）
  */
 export function filterWithDefaultRules(
@@ -364,6 +381,11 @@ export function filterWithDefaultRules(
   if (!isMediaPlaylist(raw)) {
     return { content: raw, removed: 0, total: 0, method: 'not-media' };
   }
+
+  // 有显式广告标记时放宽到 0.8，仍然保留兜底（不会把整片正片删光）
+  const effectiveRatio = hasExplicitAdMarkers(raw)
+    ? Math.max(maxRemoveRatio, 0.8)
+    : maxRemoveRatio;
 
   const parsed = parsePlaylist(raw);
   const total = parsed.segments.length;
@@ -377,13 +399,13 @@ export function filterWithDefaultRules(
   }
 
   // 安全阀：删太多说明判定可能反了，直接放弃
-  if (toRemove.size / total > maxRemoveRatio) {
+  if (toRemove.size / total > effectiveRatio) {
     return {
       content: raw,
       removed: 0,
       total,
       method: 'aborted',
-      reason: `命中 ${toRemove.size}/${total} 片，超过阈值 ${maxRemoveRatio}，放弃过滤`,
+      reason: `命中 ${toRemove.size}/${total} 片，超过阈值 ${effectiveRatio}，放弃过滤`,
     };
   }
 

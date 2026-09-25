@@ -12,6 +12,10 @@
 
 本分支把去广告搬到**服务端**，让所有端拿到的都是同一份清洗过的播放列表。
 
+> 配套的浏览器端用法（后台自定义代码怎么写、函数签名、示例代码）见
+> [自定义去广告功能使用文档](CUSTOM_AD_FILTER.md)。服务端沿用**同一份**自定义代码与
+> 同一个函数签名 `filterAdsFromM3U8(type, m3u8Content)`，后台里改一次，两端同时生效。
+
 ## 改动落点
 
 | 文件 | 作用 |
@@ -19,9 +23,12 @@
 | `src/lib/m3u8-ad-filter.ts` | 新增。服务端去广告引擎，纯 TS、无 DOM 依赖 |
 | `src/lib/server-play-url.ts` | 新增。把对外输出的播放地址改写成"本站 m3u8 代理" |
 | `src/app/api/proxy/m3u8/route.ts` | 在 URI 改写**之前**执行过滤，是最核心的收口点 |
-| `src/app/api/detail/route.ts` | 详情接口的剧集地址可选改写成代理地址 |
+| `src/app/api/detail/route.ts` | 详情接口的剧集地址可选改写成代理地址（TV / 手机端主要入口） |
+| `src/app/api/shortdrama/parse/route.ts` | 短剧解析出的真实地址同样改写（短剧是客户端直连播放的） |
 | `src/lib/utils.ts` | `applyVideoPlayProxy` 不再对相对地址套娃（已是本站代理地址时跳过） |
 | `src/components/CustomAdFilterConfig.tsx` | 后台新增四个开关 + 一个比例滑杆 |
+
+对外输出的代理地址一律拼成**绝对地址**（`https://<本站域名>/api/proxy/m3u8?url=...`）。TV / 手机 / 第三方播放器不一定会替相对路径补全域名，给相对地址在它们那边可能直接变成非法 URL。
 
 ### 为什么放在 `/api/proxy/m3u8`
 
@@ -46,6 +53,9 @@
    - 被删块携带的 `#EXT-X-KEY` / `#EXT-X-MAP` 回填到下一个分片之前（不回填会导致解密失败）；
    - 头部被删 N 片时，`#EXT-X-MEDIA-SEQUENCE` 加 N（不修正会导致播放器定位错集）。
 5. **安全阀**：删得超过设定比例（默认 50%）、或删完没有剩余分片，一律原样返回。宁可漏删，不可误删正片。
+   **例外**：列表里出现显式广告标记（`#EXT-X-CUE-OUT/IN`、`SCTE35` 系列、`#EXT-X-ASSET`）时，
+   阈值放宽到 80%。这类标记说明上游确实做了广告插入，短列表里广告占比天然就高
+   （例如 6 片里 4 片广告），不放宽的话会被安全阀误拦，反而一片都删不掉。
 
 ## 配置项（后台 → 自定义去广告）
 
@@ -77,6 +87,7 @@
 ```
 X-Ad-Filter-Removed: 36     # 本次剔除的分片数
 X-Ad-Filter-Method: default # custom=自定义代码 / default=内置规则 / disabled=未启用 / not-media=master 列表
+X-Ad-Filter-Cache:  hit     # hit=命中过滤结果缓存 / miss=本次重新计算（直播不缓存，无此头）
 ```
 
 单次请求临时关掉过滤（用来对比是否误删）：
@@ -84,6 +95,9 @@ X-Ad-Filter-Method: default # custom=自定义代码 / default=内置规则 / di
 ```
 /api/proxy/m3u8?url=...&adFilter=off
 ```
+
+点播列表的过滤结果会缓存在进程内（5 分钟，最多 300 条），客户端反复拉同一集不会重复解析上千行。
+改了后台自定义代码或调整了比例滑杆，缓存 key 会随之变化，不会用到旧规则的结果。直播列表不缓存——它是滑动窗口，内容一直在变。
 
 ## 未覆盖的部分
 

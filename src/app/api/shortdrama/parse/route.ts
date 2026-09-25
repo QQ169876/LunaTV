@@ -5,6 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCacheTime, getConfig } from '@/lib/config';
 import { parseShortDramaEpisode } from '@/lib/shortdrama.client';
 import { recordRequest, getDbQueryCount, resetDbQueryCount } from '@/lib/performance-monitor';
+import { wrapParsedUrlWithProxy } from '@/lib/server-play-url';
 
 // 标记为动态路由
 export const dynamic = 'force-dynamic';
@@ -114,6 +115,13 @@ export async function GET(request: NextRequest) {
       episode: result.data!.currentEpisode || episodeNum,
       totalEpisodes: result.data!.totalEpisodes || 1,
     };
+
+    // 🧹 服务端去广告：短剧解析出的真实地址同样改写成走本站代理
+    try {
+      wrapParsedUrlWithProxy(response, await getConfig(), new URL(request.url).origin);
+    } catch {
+      // 改写失败不影响正常返回
+    }
 
     // 设置与豆瓣一致的缓存策略
     const cacheTime = await getCacheTime();
