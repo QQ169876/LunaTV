@@ -1,21 +1,43 @@
 # 去广告版：镜像怎么给别人 & 怎么安全同步上游
 
-面向不太熟 Docker 的场景说明，照抄命令即可。所有命令中的 `lunatv:adfilter-latest`
-是本机构建出来的去广告镜像标签（对应源码提交 `6cd5e04`）。
+面向不太熟 Docker 的场景说明，照抄命令即可。
 
-## 一、镜像现在在哪里
+## 零、一句话版：别人怎么拉（已发布到 GitHub 官方镜像仓库）
 
-**只在你的服务器本地**，没有上传到任何公开仓库，所以别人直接 `docker pull` 是拉不到的。
-在服务器上 `docker images` 能看到：
+镜像已经推到 **GHCR（GitHub Container Registry）并设为公开**，任何人不需要账号、
+不需要登录，直接一条命令就能拉：
 
-```
-lunatv    6.6.4-adfilter-6cd5e04   308MB
-lunatv    adfilter-latest          308MB   # 同一个镜像的通用标签
+```bash
+docker pull ghcr.io/qq169876/lunatv:latest
 ```
 
-想让别人用上，有三种办法，按省事程度排序。
+拉下来直接跑：
 
-### 办法 1：打包成文件给他（不需要任何账号）
+```bash
+docker run -d --name moontv --restart always -p 3000:3000 \
+  -e USERNAME=admin -e PASSWORD=改成自己的密码 \
+  ghcr.io/qq169876/lunatv:latest
+```
+
+浏览器打开 `http://他的机器IP:3000` 即可。
+
+**可用的标签**（都是同一个镜像，只是名字不同）：
+
+| 标签 | 用途 |
+| --- | --- |
+| `ghcr.io/qq169876/lunatv:latest` | 最新去广告版，最省事就用这个 |
+| `ghcr.io/qq169876/lunatv:adfilter-latest` | 同上，名字里带 adfilter 好辨认 |
+| `ghcr.io/qq169876/lunatv:6.6.4-adfilter-6cd5e04` | 锁死版本（对应源码提交 `6cd5e04`），想固定不变用这个 |
+
+包页面：<https://github.com/users/QQ169876/packages/container/package/lunatv>
+
+> 注意：镜像是**按当前源码编译好的成品**，不含任何配置。
+> 拉完还要在后台「去广告」里打开开关（见 SERVER_AD_FILTER.md）；
+> 想让 TV / 第三方播放器也走服务端过滤，再打开「对外播放地址改写为本站代理」。
+
+## 一、还有另外两种办法（离线 / 自己编译）
+
+### 办法 1：打包成文件给他（断网/内网也能装）
 
 在你的服务器上导出（约 1-3 分钟，文件 100MB 出头）：
 
@@ -34,24 +56,30 @@ docker run -d --name moontv --restart always -p 3000:3000 \
 
 然后浏览器打开 `http://他的机器IP:3000`。
 
-### 办法 2：推到 Docker Hub / GHCR（别人一条命令就能拉）
+### 办法 2（已完成）：推到 GHCR，别人一条命令就能拉
 
-需要一个 Docker Hub 账号（或 GitHub 账号用 GHCR）：
-
-```bash
-docker tag lunatv:adfilter-latest 你的用户名/lunatv:adfilter-6.6.4
-docker login                                        # 输入账号密码
-docker push 你的用户名/lunatv:adfilter-6.6.4
-```
-
-对方只需要：
+上面第零节就是这个办法，已经做好了。以后代码更新、重新构建出新镜像之后，
+在服务器上执行这几条就能把最新版本推上去（需要一个有 `write:packages`
+权限的 GitHub 个人令牌，令牌只在自己机器上用，不要给别人）：
 
 ```bash
-docker pull 你的用户名/lunatv:adfilter-6.6.4
-docker run -d --name moontv --restart always -p 3000:3000 \
-  -e USERNAME=admin -e PASSWORD=改成自己的密码 \
-  你的用户名/lunatv:adfilter-6.6.4
+echo "<你的GitHub令牌>" | docker login ghcr.io -u qq169876 --password-stdin
+
+docker tag lunatv:adfilter-latest ghcr.io/qq169876/lunatv:adfilter-latest
+docker tag lunatv:adfilter-latest ghcr.io/qq169876/lunatv:6.6.4-adfilter-<新提交号>
+docker tag lunatv:adfilter-latest ghcr.io/qq169876/lunatv:latest
+
+docker push ghcr.io/qq169876/lunatv:adfilter-latest
+docker push ghcr.io/qq169876/lunatv:6.6.4-adfilter-<新提交号>
+docker push ghcr.io/qq169876/lunatv:latest
+docker logout ghcr.io
 ```
+
+仓库名必须**全小写**（`qq169876` 不能写成 `QQ169876`），否则 docker 会报
+`repository name must be lowercase`。
+
+令牌在 GitHub → Settings → Developer settings → Personal access tokens 里生成，
+勾选 `write:packages` 和 `delete:packages` 即可。
 
 ### 办法 3：把源码给他，让他自己构建
 
