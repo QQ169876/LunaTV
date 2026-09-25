@@ -426,22 +426,22 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
 
     // 处理 EXT-X-MAP 标签中的 URI
     if (line.startsWith('#EXT-X-MAP:')) {
-      line = rewriteMapUri(line, baseUrl, proxyBase, variables, sourceParam);
+      line = rewriteMapUri(line, baseUrl, proxyBase, variables, sourceParam, allowCORS);
     }
 
     // 处理 EXT-X-KEY 标签中的 URI
     if (line.startsWith('#EXT-X-KEY:')) {
-      line = rewriteKeyUri(line, baseUrl, proxyBase, variables, sourceParam);
+      line = rewriteKeyUri(line, baseUrl, proxyBase, variables, sourceParam, allowCORS);
     }
 
     // 处理 EXT-X-MEDIA 标签中的 URI (音频轨道等)
     if (line.startsWith('#EXT-X-MEDIA:')) {
-      line = rewriteMediaUri(line, baseUrl, proxyBase, variables, sourceParam);
+      line = rewriteMediaUri(line, baseUrl, proxyBase, variables, sourceParam, allowCORS);
     }
 
     // 处理 LL-HLS 部分片段 (EXT-X-PART)
     if (line.startsWith('#EXT-X-PART:')) {
-      line = rewritePartUri(line, baseUrl, proxyBase, variables, sourceParam);
+      line = rewritePartUri(line, baseUrl, proxyBase, variables, sourceParam, allowCORS);
     }
 
     // 处理内容导向 (EXT-X-CONTENT-STEERING)
@@ -456,7 +456,7 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
 
     // 处理会话密钥 (EXT-X-SESSION-KEY)
     if (line.startsWith('#EXT-X-SESSION-KEY:')) {
-      line = rewriteSessionKeyUri(line, baseUrl, proxyBase, variables, sourceParam);
+      line = rewriteSessionKeyUri(line, baseUrl, proxyBase, variables, sourceParam, allowCORS);
     }
 
     // 处理嵌套的 M3U8 文件 (EXT-X-STREAM-INF)
@@ -470,7 +470,10 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
           let resolvedUrl = resolveUrl(baseUrl, nextLine);
           resolvedUrl = substituteVariables(resolvedUrl, variables);
           // 把当前请求的referer参数透传到variant URL，否则下一跳会因为没有Referer被上游拒绝
-          const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}${sourceParam}${refererParam}`;
+          // allowCORS（只代理清单、分片直连）必须一并透传，否则下一层会退化成全流量代理
+          const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}${sourceParam}${refererParam}${
+            allowCORS ? '&allowCORS=true' : ''
+          }`;
           rewrittenLines.push(proxyUrl);
         } else {
           rewrittenLines.push(nextLine);
@@ -486,7 +489,7 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
 
     // 处理预加载提示 (EXT-X-PRELOAD-HINT)
     if (line.startsWith('#EXT-X-PRELOAD-HINT:')) {
-      line = rewritePreloadHintUri(line, baseUrl, proxyBase, variables, sourceParam);
+      line = rewritePreloadHintUri(line, baseUrl, proxyBase, variables, sourceParam, allowCORS);
     }
 
     // 处理渲染报告 (EXT-X-RENDITION-REPORT)
@@ -542,7 +545,7 @@ function processDefineVariables(line: string, variables: Map<string, string>): s
   return line; // 返回原始标签，让客户端处理
 }
 
-function rewriteMapUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '') {
+function rewriteMapUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '', allowCORS: boolean = false) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     let originalUri = uriMatch[1];
@@ -550,13 +553,15 @@ function rewriteMapUri(line: string, baseUrl: string, proxyBase: string, variabl
       originalUri = substituteVariables(originalUri, variables);
     }
     const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
+    const proxyUrl = allowCORS
+      ? resolvedUrl
+      : `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;
 }
 
-function rewriteKeyUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '') {
+function rewriteKeyUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '', allowCORS: boolean = false) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     let originalUri = uriMatch[1];
@@ -564,13 +569,15 @@ function rewriteKeyUri(line: string, baseUrl: string, proxyBase: string, variabl
       originalUri = substituteVariables(originalUri, variables);
     }
     const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = `${proxyBase}/key?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
+    const proxyUrl = allowCORS
+      ? resolvedUrl
+      : `${proxyBase}/key?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;
 }
 
-function rewriteMediaUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '') {
+function rewriteMediaUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '', allowCORS: boolean = false) {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     let originalUri = uriMatch[1];
@@ -590,7 +597,9 @@ function rewriteMediaUri(line: string, baseUrl: string, proxyBase: string, varia
     
     try {
       const resolvedUrl = resolveUrl(baseUrl, originalUri);
-      const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
+      const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}${sourceParam}${
+        allowCORS ? '&allowCORS=true' : ''
+      }`;
       return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
     } catch (error) {
       if (process.env.NODE_ENV === 'development') {
@@ -604,7 +613,7 @@ function rewriteMediaUri(line: string, baseUrl: string, proxyBase: string, varia
 }
 
 // 处理 LL-HLS 部分片段
-function rewritePartUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = ''): string {
+function rewritePartUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '', allowCORS: boolean = false): string {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     let originalUri = uriMatch[1];
@@ -612,7 +621,9 @@ function rewritePartUri(line: string, baseUrl: string, proxyBase: string, variab
       originalUri = substituteVariables(originalUri, variables);
     }
     const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
+    const proxyUrl = allowCORS
+      ? resolvedUrl
+      : `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;
@@ -649,7 +660,7 @@ function rewriteSessionDataUri(line: string, baseUrl: string, proxyBase: string,
 }
 
 // 处理会话密钥
-function rewriteSessionKeyUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = ''): string {
+function rewriteSessionKeyUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '', allowCORS: boolean = false): string {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     let originalUri = uriMatch[1];
@@ -657,7 +668,9 @@ function rewriteSessionKeyUri(line: string, baseUrl: string, proxyBase: string, 
       originalUri = substituteVariables(originalUri, variables);
     }
     const resolvedUrl = resolveUrl(baseUrl, originalUri);
-    const proxyUrl = `${proxyBase}/key?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
+    const proxyUrl = allowCORS
+      ? resolvedUrl
+      : `${proxyBase}/key?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
     return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
   }
   return line;
@@ -690,7 +703,7 @@ function rewriteDateRangeUri(line: string, baseUrl: string, proxyBase: string, v
 }
 
 // 处理预加载提示 - LL-HLS 功能
-function rewritePreloadHintUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = ''): string {
+function rewritePreloadHintUri(line: string, baseUrl: string, proxyBase: string, variables?: Map<string, string>, sourceParam: string = '', allowCORS: boolean = false): string {
   const uriMatch = line.match(/URI="([^"]+)"/);
   if (uriMatch) {
     let originalUri = uriMatch[1];
@@ -705,10 +718,8 @@ function rewritePreloadHintUri(line: string, baseUrl: string, proxyBase: string,
       const type = typeMatch ? typeMatch[1] : 'PART';
       
       let proxyUrl: string;
-      if (type === 'PART') {
-        proxyUrl = `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
-      } else if (type === 'MAP') {
-        proxyUrl = `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
+      if (allowCORS) {
+        proxyUrl = resolvedUrl;
       } else {
         proxyUrl = `${proxyBase}/segment?url=${encodeURIComponent(resolvedUrl)}${sourceParam}`;
       }
