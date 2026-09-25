@@ -26,7 +26,7 @@
 ![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-green)
 ![Docker Ready](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
 ![Version](https://img.shields.io/badge/Version-6.6.3-orange)
-[![Ad--Free Image](https://img.shields.io/badge/%E5%8E%BB%E5%B9%BF%E5%91%8A%E7%89%88%E9%95%9C%E5%83%8F-ghcr.io%2Fqq169876%2Flunatv-2496ED?logo=docker)](https://github.com/users/QQ169876/packages/container/package/lunatv)
+[![去广告版镜像](https://img.shields.io/badge/%E5%8E%BB%E5%B9%BF%E5%91%8A%E7%89%88%E9%95%9C%E5%83%8F-ghcr.io%2Fqq169876%2Flunatv-2496ED?logo=docker)](https://github.com/users/QQ169876/packages/container/package/lunatv)
 
 </div>
 
