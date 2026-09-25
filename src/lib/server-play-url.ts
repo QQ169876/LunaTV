@@ -18,6 +18,38 @@ export function shouldForceProxyPlayback(config: any): boolean {
   return config?.SiteConfig?.ForceProxyPlayback === true;
 }
 
+/**
+ * 判断请求是否来自浏览器（网页端）。
+ *
+ * 网页端自带播放器：hls.js loader 会在浏览器里直接过滤广告，且源站分片多半没有
+ * CORS 头，一旦把地址改写成代理 + 分片直连，浏览器会因跨域直接播不了。
+ * 因此网页端保持原地址（走浏览器端去广告 / VideoProxy），TV、手机播放器、
+ * 第三方这类非浏览器请求才改写成服务端代理。
+ *
+ * 判断依据（浏览器一定带、播放器基本不带）：
+ * - Sec-Fetch-Mode / Sec-Fetch-Site（浏览器专属的 Fetch Metadata 头）
+ * - Referer 指向播放页（浏览器加载 m3u8 时一定带）
+ */
+export function isBrowserRequest(request: {
+  headers: { get(name: string): string | null };
+  url?: string;
+}): boolean {
+  if (request.headers.get('sec-fetch-mode') || request.headers.get('sec-fetch-site')) {
+    return true;
+  }
+  const referer = request.headers.get('referer');
+  if (referer) {
+    try {
+      const refererHost = new URL(referer).host;
+      const selfHost = request.url ? new URL(request.url).host : '';
+      if (!selfHost || refererHost === selfHost) return true;
+    } catch {
+      // referer 解析失败，按非浏览器处理
+    }
+  }
+  return false;
+}
+
 function normalizeOrigin(origin?: string): string {
   if (!origin) return '';
   return origin.replace(/\/+$/, '');
@@ -52,9 +84,11 @@ export function wrapPlayUrlWithProxy(
 export function wrapEpisodesWithProxy(
   result: any,
   config: any,
-  origin?: string
+  origin?: string,
+  skip = false
 ): any {
   if (!result || !Array.isArray(result.episodes)) return result;
+  if (skip) return result; // 网页端：保持原地址
   if (!shouldForceProxyPlayback(config)) return result;
   result.episodes = result.episodes.map((u: unknown) =>
     wrapPlayUrlWithProxy(u, config, origin)
@@ -69,9 +103,11 @@ export function wrapEpisodesWithProxy(
 export function wrapParsedUrlWithProxy(
   result: any,
   config: any,
-  origin?: string
+  origin?: string,
+  skip = false
 ): any {
   if (!result || typeof result !== 'object') return result;
+  if (skip) return result; // 网页端：保持原地址
   if (!shouldForceProxyPlayback(config)) return result;
   if ('url' in result) result.url = wrapPlayUrlWithProxy(result.url, config, origin);
   if ('proxyUrl' in result) {

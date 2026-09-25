@@ -5,6 +5,7 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { getBaseUrl, resolveUrl } from "@/lib/live";
 import { filterM3U8Ads } from "@/lib/m3u8-ad-filter";
+import { isBrowserRequest } from "@/lib/server-play-url";
 import { readTextLimited } from "@/lib/proxy-security";
 import { DEFAULT_USER_AGENT } from "@/lib/user-agent";
 
@@ -91,7 +92,10 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
-  const allowCORS = searchParams.get('allowCORS') === 'true';
+  // 浏览器请求强制走同源分片代理：源站分片大多没有 CORS 头，
+  // 一旦直连就会被浏览器拦掉，网页端表现为"播不了"。
+  const allowCORS =
+    searchParams.get('allowCORS') === 'true' && !isBrowserRequest(request);
   const source = searchParams.get('moontv-source');
   
   if (!url) {
