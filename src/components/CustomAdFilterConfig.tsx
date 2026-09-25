@@ -2,7 +2,7 @@
 
 'use client';
 
-import { AlertCircle, CheckCircle, Code, Info } from 'lucide-react';
+import { AlertCircle, CheckCircle, Code, Info, Shield } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { AdminConfig } from '@/lib/admin.types';
@@ -21,12 +21,31 @@ const CustomAdFilterConfig = ({ config, refreshConfig }: CustomAdFilterConfigPro
     customAdFilterVersion: 1,
   });
 
+  // 服务端去广告开关
+  const [serverSettings, setServerSettings] = useState({
+    serverAdFilterEnabled: true,
+    serverAdFilterLive: false,
+    serverAdFilterMaxRemoveRatio: 0.5,
+    forceProxyPlayback: false,
+    proxyPlaybackAllowCORS: false,
+  });
+
   // 从config加载设置
   useEffect(() => {
     if (config?.SiteConfig) {
       setFilterSettings({
         customAdFilterCode: config.SiteConfig.CustomAdFilterCode || '',
         customAdFilterVersion: config.SiteConfig.CustomAdFilterVersion || 1,
+      });
+      setServerSettings({
+        serverAdFilterEnabled: config.SiteConfig.ServerAdFilterEnabled !== false,
+        serverAdFilterLive: config.SiteConfig.ServerAdFilterLive === true,
+        serverAdFilterMaxRemoveRatio:
+          typeof config.SiteConfig.ServerAdFilterMaxRemoveRatio === 'number'
+            ? config.SiteConfig.ServerAdFilterMaxRemoveRatio
+            : 0.5,
+        forceProxyPlayback: config.SiteConfig.ForceProxyPlayback === true,
+        proxyPlaybackAllowCORS: config.SiteConfig.ProxyPlaybackAllowCORS === true,
       });
     }
   }, [config]);
@@ -52,6 +71,11 @@ const CustomAdFilterConfig = ({ config, refreshConfig }: CustomAdFilterConfigPro
           ...config.SiteConfig,
           CustomAdFilterCode: filterSettings.customAdFilterCode,
           CustomAdFilterVersion: filterSettings.customAdFilterVersion,
+          ServerAdFilterEnabled: serverSettings.serverAdFilterEnabled,
+          ServerAdFilterLive: serverSettings.serverAdFilterLive,
+          ServerAdFilterMaxRemoveRatio: serverSettings.serverAdFilterMaxRemoveRatio,
+          ForceProxyPlayback: serverSettings.forceProxyPlayback,
+          ProxyPlaybackAllowCORS: serverSettings.proxyPlaybackAllowCORS,
         }
       };
 
@@ -212,6 +236,98 @@ function filterAdsFromM3U8(type, m3u8Content) {
               <li>如果代码执行失败，将自动降级使用默认去广告规则</li>
               <li>修改代码后记得更新版本号，让浏览器刷新缓存</li>
             </ul>
+          </div>
+        </div>
+      </div>
+
+      {/* 服务端去广告开关 */}
+      <div className='bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg p-4'>
+        <div className='flex items-start gap-3'>
+          <Shield className='w-5 h-5 text-purple-600 dark:text-purple-400 shrink-0 mt-0.5' />
+          <div className='flex-1 text-sm text-purple-900 dark:text-purple-100'>
+            <p className='font-medium mb-3'>服务端去广告（对网页 / TV / 手机端统一生效）</p>
+
+            <label className='flex items-start gap-2 mb-2 cursor-pointer'>
+              <input
+                type='checkbox'
+                checked={serverSettings.serverAdFilterEnabled}
+                onChange={(e) => setServerSettings({ ...serverSettings, serverAdFilterEnabled: e.target.checked })}
+                className='mt-0.5 w-4 h-4 text-purple-600 rounded'
+              />
+              <span>
+                启用服务端去广告
+                <span className='block text-xs text-purple-700 dark:text-purple-300'>
+                  关闭则所有端都拿到原始列表，下方自定义代码仅在浏览器端生效
+                </span>
+              </span>
+            </label>
+
+            <label className='flex items-start gap-2 mb-2 cursor-pointer'>
+              <input
+                type='checkbox'
+                checked={serverSettings.serverAdFilterLive}
+                onChange={(e) => setServerSettings({ ...serverSettings, serverAdFilterLive: e.target.checked })}
+                className='mt-0.5 w-4 h-4 text-purple-600 rounded'
+              />
+              <span>
+                直播源也一并过滤
+                <span className='block text-xs text-purple-700 dark:text-purple-300'>
+                  直播列表是滑动窗口，默认关闭，确认无误后再开
+                </span>
+              </span>
+            </label>
+
+            <label className='flex items-start gap-2 mb-2 cursor-pointer'>
+              <input
+                type='checkbox'
+                checked={serverSettings.forceProxyPlayback}
+                onChange={(e) => setServerSettings({ ...serverSettings, forceProxyPlayback: e.target.checked })}
+                className='mt-0.5 w-4 h-4 text-purple-600 rounded'
+              />
+              <span>
+                对外输出的播放地址统一改写为本站代理
+                <span className='block text-xs text-purple-700 dark:text-purple-300'>
+                  开启后 TV / 手机等不走网页播放器的客户端也能拿到过滤后的列表；
+                  代价是视频流量经过本站
+                </span>
+              </span>
+            </label>
+
+            <label className='flex items-start gap-2 mb-2 cursor-pointer'>
+              <input
+                type='checkbox'
+                checked={serverSettings.proxyPlaybackAllowCORS}
+                onChange={(e) => setServerSettings({ ...serverSettings, proxyPlaybackAllowCORS: e.target.checked })}
+                className='mt-0.5 w-4 h-4 text-purple-600 rounded'
+              />
+              <span>
+                只代理播放列表、分片直连
+                <span className='block text-xs text-purple-700 dark:text-purple-300'>
+                  省带宽，但要求上游分片允许跨域；电视端原生播放器通常没问题
+                </span>
+              </span>
+            </label>
+
+            <div className='mt-3'>
+              <label className='block text-xs font-medium mb-1'>
+                单列表最多允许删除的分片占比：{serverSettings.serverAdFilterMaxRemoveRatio}
+              </label>
+              <input
+                type='range'
+                min='0.1'
+                max='0.9'
+                step='0.05'
+                value={serverSettings.serverAdFilterMaxRemoveRatio}
+                onChange={(e) => setServerSettings({
+                  ...serverSettings,
+                  serverAdFilterMaxRemoveRatio: parseFloat(e.target.value)
+                })}
+                className='w-full'
+              />
+              <p className='text-xs text-purple-700 dark:text-purple-300 mt-1'>
+                超过该比例就放弃本次过滤，宁可漏删也不误删正片
+              </p>
+            </div>
           </div>
         </div>
       </div>

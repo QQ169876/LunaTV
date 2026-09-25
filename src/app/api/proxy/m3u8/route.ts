@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 
 import { getConfig } from "@/lib/config";
 import { getBaseUrl, resolveUrl } from "@/lib/live";
+import { filterM3U8Ads } from "@/lib/m3u8-ad-filter";
 import { readTextLimited } from "@/lib/proxy-security";
 import { DEFAULT_USER_AGENT } from "@/lib/user-agent";
 
@@ -168,8 +169,12 @@ export async function GET(request: Request) {
       // 使用最终的响应URL作为baseUrl，而不是原始的请求URL
       const baseUrl = getBaseUrl(finalUrl);
 
+      // 🧹 服务端去广告：先剔除广告分片与广告标记行，再做 URI 改写。
+      // 放在改写之前，广告分片就不会被分配代理地址，播放器根本不会去拉取。
+      const adFilter = applyServerAdFilter(m3u8Content, request, config, source);
+
       // 重写 M3U8 内容
-      const modifiedContent = rewriteM3U8Content(m3u8Content, baseUrl, request, allowCORS, source);
+      const modifiedContent = rewriteM3U8Content(adFilter.content, baseUrl, request, allowCORS, source);
 
       const headers = new Headers();
       headers.set('Content-Type', contentType || 'application/vnd.apple.mpegurl');
@@ -179,8 +184,11 @@ export async function GET(request: Request) {
       headers.set('Cache-Control', 'no-cache, no-store, must-revalidate');
       headers.set('Pragma', 'no-cache');
       headers.set('Expires', '0');
-      headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Content-Type');
+      headers.set('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Content-Type, X-Ad-Filter-Removed, X-Ad-Filter-Method');
       headers.set('Content-Length', modifiedContent.length.toString());
+      // 便于排查：本次请求实际剔除的广告分片数与采用的方式
+      headers.set('X-Ad-Filter-Removed', String(adFilter.removed || 0));
+      headers.set('X-Ad-Filter-Method', adFilter.method || 'none');
 
       // 更新性能统计
       const responseTime = Date.now() - startTime;
@@ -259,6 +267,65 @@ export async function GET(request: Request) {
     if (stats.requests % 100 === 0 && process.env.NODE_ENV === 'development') {
       console.log(`M3U8 Proxy Stats - Requests: ${stats.requests}, Errors: ${stats.errors}, Avg Response Time: ${stats.avgResponseTime.toFixed(2)}ms, Total Bytes: ${(stats.totalBytes / 1024 / 1024).toFixed(2)}MB`);
     }
+  }
+}
+
+/**
+ * 服务端去广告：所有经过本站 m3u8 代理的播放列表都在这里被清洗，
+ * 因此网页端、TV 端、手机端、第三方播放器拿到的都是同一份干净列表。
+ *
+ * 开关优先级：URL 参数 adFilter=off/on > 后台配置 > 默认值
+ * - SiteConfig.ServerAdFilterEnabled：总开关，默认开
+ * - SiteConfig.ServerAdFilterLive：直播源是否一并过滤，默认关（直播列表是滑动窗口，保守处理）
+ * - SiteConfig.ServerAdFilterMaxRemoveRatio：单列表最多允许删除的分片占比，默认 0.5
+ * - SiteConfig.CustomAdFilterCode：管理员自定义代码，签名 filterAdsFromM3U8(type, content)
+ */
+function applyServerAdFilter(
+  content: string,
+  request: Request,
+  config: any,
+  sourceKey: string | null
+): { content: string; removed: number; method: string } {
+  const sc = config?.SiteConfig || {};
+  const isLive = !!sourceKey;
+
+  let enabled = sc.ServerAdFilterEnabled !== false; // 默认开启
+  if (isLive && sc.ServerAdFilterLive !== true) enabled = false; // 直播默认不过滤
+
+  // 单次请求覆盖，便于排障（?adFilter=off / ?adFilter=on）
+  const override = new URL(request.url).searchParams.get('adFilter');
+  if (override === 'off' || override === '0' || override === 'false') enabled = false;
+  if (override === 'on' || override === '1' || override === 'true') enabled = true;
+
+  if (!enabled) {
+    return { content, removed: 0, method: 'disabled' };
+  }
+
+  const maxRatio = typeof sc.ServerAdFilterMaxRemoveRatio === 'number'
+    ? Math.min(Math.max(sc.ServerAdFilterMaxRemoveRatio, 0.1), 0.9)
+    : 0.5;
+
+  try {
+    const result = filterM3U8Ads(content, {
+      sourceKey,
+      customCode: sc.CustomAdFilterCode || '',
+      enabled: true,
+      maxRemoveRatio: maxRatio,
+    });
+
+    if (process.env.NODE_ENV === 'development' && result.removed > 0) {
+      console.log(
+        `[ad-filter] source=${sourceKey || '-'} method=${result.method} removed=${result.removed}/${result.total}`
+      );
+    }
+
+    return { content: result.content, removed: result.removed, method: result.method };
+  } catch (error: any) {
+    // 过滤失败绝不能影响播放，原样返回
+    if (process.env.NODE_ENV === 'development') {
+      console.warn('[ad-filter] 过滤失败，原样返回:', error?.message);
+    }
+    return { content, removed: 0, method: 'error' };
   }
 }
 

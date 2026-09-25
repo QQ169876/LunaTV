@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
 import { getAuthInfoFromCookie } from '@/lib/auth';
-import { getAvailableApiSites, getCacheTime } from '@/lib/config';
+import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { getDetailFromApi, searchFromApi } from '@/lib/downstream';
 import { recordRequest, getDbQueryCount, resetDbQueryCount } from '@/lib/performance-monitor';
+import { wrapEpisodesWithProxy } from '@/lib/server-play-url';
 
 export const runtime = 'nodejs';
 
@@ -307,6 +308,15 @@ export async function GET(request: NextRequest) {
       });
 
       return NextResponse.json(errorResponse, { status: 404 });
+    }
+
+    // 🧹 服务端去广告：把剧集地址改写成本站 m3u8 代理，
+    // 这样 TV / 手机等不走网页播放器的客户端拿到的也是过滤后的列表。
+    // 默认关闭（ForceProxyPlayback），开启后视频流量会经过本站。
+    try {
+      wrapEpisodesWithProxy(result, await getConfig());
+    } catch {
+      // 改写失败不影响正常返回
     }
 
     const cacheTime = await getCacheTime();

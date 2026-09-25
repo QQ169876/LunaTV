@@ -1,0 +1,91 @@
+# 服务端去广告（全端生效）
+
+## 为什么要有这个
+
+原版（MoonTV 沿袭下来的实现）的去广告是**浏览器端**的：
+
+- 后台配置的自定义代码通过 `/api/ad-filter` 下发到浏览器，缓存在 `localStorage`；
+- 播放页把它塞进一个自定义 hls.js `loader`，在**浏览器里**改写 m3u8 文本；
+- 只有网页播放页这一条路会执行它。
+
+后果很明显：**TV 端（Selene-TV）、手机端（Selene）、第三方播放器拿到的是上游原始 m3u8**，里面该有的广告一片不少——因为它们只是拿一个地址去播，根本没有 LunaTV 的网页播放器。
+
+本分支把去广告搬到**服务端**，让所有端拿到的都是同一份清洗过的播放列表。
+
+## 改动落点
+
+| 文件 | 作用 |
+|------|------|
+| `src/lib/m3u8-ad-filter.ts` | 新增。服务端去广告引擎，纯 TS、无 DOM 依赖 |
+| `src/lib/server-play-url.ts` | 新增。把对外输出的播放地址改写成"本站 m3u8 代理" |
+| `src/app/api/proxy/m3u8/route.ts` | 在 URI 改写**之前**执行过滤，是最核心的收口点 |
+| `src/app/api/detail/route.ts` | 详情接口的剧集地址可选改写成代理地址 |
+| `src/lib/utils.ts` | `applyVideoPlayProxy` 不再对相对地址套娃（已是本站代理地址时跳过） |
+| `src/components/CustomAdFilterConfig.tsx` | 后台新增四个开关 + 一个比例滑杆 |
+
+### 为什么放在 `/api/proxy/m3u8`
+
+这是全站唯一一个"代客户端去取 m3u8 文本"的服务端出口。网页端降级直连失败时走它、直播走它、下载模块走它，只要把地址指向它，任何客户端都能受益。
+
+顺序上刻意安排在 **URI 改写之前**：广告分片先被删掉，就不会被分配 `/api/proxy/segment` 代理地址，播放器根本不会去拉，省流量也更干净。
+
+## 过滤规则
+
+执行顺序：
+
+1. **master 列表不过滤**（没有 `#EXTINF`）。子列表地址会被改写成继续走本站代理，下一跳再过滤。
+2. **管理员自定义代码优先**：签名 `filterAdsFromM3U8(type, m3u8Content)`，与浏览器端一致，支持粘贴带类型注解的 TS（会自动剥掉）。执行出错或返回非法内容 → 自动降级到内置规则，不会让播放挂掉。
+3. **内置默认规则**：
+   - 分片地址关键词（`sponsor`、`/ad/`、`/ads/`、`advert`、`/adbreak/`、`/preroll/`、`/midroll/`、`doubleclick`、`/gg/` …）；
+   - 地址是 `?url=` 套娃时先解码再判定（否则所有分片看起来都在同一个域名下）；
+   - `#EXTINF` 行尾中文广告词（广告 / 贴片 / 赞助 / 推广）；
+   - 时长极端异常（≤0.2s 或 ≥120s），且异常片占比 ≤20% 才采信。
+   - 广告标记行（`EXT-X-CUE-OUT/IN`、SCTE35 相关 `EXT-X-DATERANGE`、`EXT-X-ASSET` 等）整行剔除。
+4. **删除后做连续性修复**：
+   - 删除块之后补 `#EXT-X-DISCONTINUITY`；
+   - 被删块携带的 `#EXT-X-KEY` / `#EXT-X-MAP` 回填到下一个分片之前（不回填会导致解密失败）；
+   - 头部被删 N 片时，`#EXT-X-MEDIA-SEQUENCE` 加 N（不修正会导致播放器定位错集）。
+5. **安全阀**：删得超过设定比例（默认 50%）、或删完没有剩余分片，一律原样返回。宁可漏删，不可误删正片。
+
+## 配置项（后台 → 自定义去广告）
+
+| 配置字段 | 默认 | 说明 |
+|----------|------|------|
+| `ServerAdFilterEnabled` | `true` | 总开关。关掉后所有端都拿原始列表 |
+| `ServerAdFilterLive` | `false` | 直播源是否一并过滤。直播是滑动窗口，默认关 |
+| `ServerAdFilterMaxRemoveRatio` | `0.5` | 单列表最多允许删除的分片占比 |
+| `ForceProxyPlayback` | `false` | 详情接口吐出的地址改写成 `/api/proxy/m3u8?url=...` |
+| `ProxyPlaybackAllowCORS` | `false` | `true` 时只代理播放列表、分片直连（省带宽，要求上游允许跨域） |
+
+`CustomAdFilterCode` 沿用原有字段，浏览器端与服务端共用同一份代码。
+
+### 关于 ForceProxyPlayback
+
+这是**让 TV / 手机端也干净**的关键开关，但要注意代价：
+
+- 关闭时：只有本来就走本站代理的请求会被过滤（网页端降级、直播）。TV 端直连上游，拿不到过滤结果。
+- 开启后：详情接口吐出的地址指向本站，代理会取回上游 m3u8 → 过滤 → 改写。此时
+  - `ProxyPlaybackAllowCORS=false`：分片也走 `/api/proxy/segment`，兼容性最好，但**视频流量全部经过本站**；
+  - `ProxyPlaybackAllowCORS=true`：只代理几 KB 的播放列表，分片直连上游，省带宽，但要求上游分片返回 CORS 头；电视端原生播放器通常不受限，浏览器端可能失败。
+
+按自己带宽和上游情况选。
+
+## 排障
+
+过滤结果会写在响应头里，直接看：
+
+```
+X-Ad-Filter-Removed: 36     # 本次剔除的分片数
+X-Ad-Filter-Method: default # custom=自定义代码 / default=内置规则 / disabled=未启用 / not-media=master 列表
+```
+
+单次请求临时关掉过滤（用来对比是否误删）：
+
+```
+/api/proxy/m3u8?url=...&adFilter=off
+```
+
+## 未覆盖的部分
+
+- 客户端**下载**模块（`src/lib/download/m3u8-downloader.ts`）在浏览器里自己抓分片，不走 `/api/proxy/m3u8`，因此不受服务端过滤影响。要覆盖它，需要让下载模块也先取代理地址。
+- `/api/parse` 返回的是第三方解析页地址，不是本站可代理的 m3u8，不在范围内。

@@ -31,6 +31,13 @@ export interface AdminConfig {
     // 自定义去广告代码
     CustomAdFilterCode?: string;
     CustomAdFilterVersion?: number;
+    // 服务端去广告（对网页端 / TV 端 / 手机端统一生效）
+    ServerAdFilterEnabled?: boolean; // 总开关，默认 true
+    ServerAdFilterLive?: boolean; // 直播源是否一并过滤，默认 false
+    ServerAdFilterMaxRemoveRatio?: number; // 单列表最多允许删除的分片占比，默认 0.5
+    // 对外输出的播放地址统一改写成"本站 m3u8 代理"，让非网页端也能拿到过滤后的列表
+    ForceProxyPlayback?: boolean; // 默认 false
+    ProxyPlaybackAllowCORS?: boolean; // true 时只代理清单、分片直连（省带宽），默认 false
     // 默认用户组
     DefaultUserTags?: string[];
   };

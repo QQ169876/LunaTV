@@ -165,6 +165,7 @@ pnpm dev
 
 - 🔧 [代理配置](docs/advanced/PROXY_CONFIG.md)
 - 🚫 [广告过滤](docs/advanced/CUSTOM_AD_FILTER.md)
+- 🧹 [服务端去广告（网页/TV/手机端统一生效）](docs/advanced/SERVER_AD_FILTER.md)
 - ⏭️ [跳过控制器](docs/advanced/SKIP_CONTROLLER_GUIDE.md)
 
 ## 🔧 技术栈
