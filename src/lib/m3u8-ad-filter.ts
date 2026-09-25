@@ -26,7 +26,14 @@ export interface AdFilterResult {
   /** 过滤前的分片总数（master 列表为 0） */
   total: number;
   /** 实际采用的过滤方式 */
-  method: 'custom' | 'default' | 'disabled' | 'not-media' | 'no-change' | 'aborted';
+  method:
+    | 'custom'
+    | 'custom+default'
+    | 'default'
+    | 'disabled'
+    | 'not-media'
+    | 'no-change'
+    | 'aborted';
   /** 中止/降级原因，便于排查 */
   reason?: string;
 }
@@ -89,6 +96,9 @@ const AD_MARKER_PREFIXES = [
 /** 需要跨删除块保留的状态型标签 */
 const CARRY_TAG_PREFIXES = ['#EXT-X-KEY', '#EXT-X-MAP'];
 
+/** 单个广告块允许的最大片数（超过就认为不是广告） */
+const MAX_AD_BLOCK_SIZE = 12;
+
 /** 单个分片 */
 interface Segment {
   /** 紧邻该分片之前的标记行（按顺序） */
@@ -97,6 +107,8 @@ interface Segment {
   url: string;
   /** EXTINF 时长，解析失败为 null */
   duration: number | null;
+  /** EXTINF 里的原始时长文本（用于小数位精度判定，如 "10.000"） */
+  durationText: string;
   /** EXTINF 行尾注释 */
   comment: string;
 }
@@ -115,6 +127,11 @@ function parseDuration(tagLine: string): number | null {
   if (!m) return null;
   const v = parseFloat(m[1]);
   return Number.isFinite(v) ? v : null;
+}
+
+function parseDurationText(tagLine: string): string {
+  const m = tagLine.match(/^#EXTINF:\s*(\d+(?:\.\d+)?)/);
+  return m ? m[1] : '';
 }
 
 function parseComment(tagLine: string): string {
@@ -188,17 +205,19 @@ function parsePlaylist(raw: string): ParsedPlaylist {
     pending = [];
 
     let duration: number | null = null;
+    let durationText = '';
     let comment = '';
     for (const t of tags) {
       const trimmed = t.trim();
       if (trimmed.startsWith('#EXTINF')) {
         duration = parseDuration(trimmed);
+        durationText = parseDurationText(trimmed);
         comment = parseComment(trimmed);
         break;
       }
     }
 
-    segments.push({ tags, url: rawLine.trim(), duration, comment });
+    segments.push({ tags, url: rawLine.trim(), duration, durationText, comment });
   }
 
   // 剩余未配对的行归到尾部
@@ -247,30 +266,377 @@ function serialize(p: ParsedPlaylist): string {
   return out.join('\n') + '\n';
 }
 
+/* -------------------------------------------------------------------------- */
+/*  判定规则（参照 TVBoxOS / M3u8.java 的"少数派即广告 + 成块判定 + 层层熔断"）   */
+/* -------------------------------------------------------------------------- */
+
+function median(values: number[]): number {
+  if (values.length === 0) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/** 按 DISCONTINUITY 把分片切成块：块内是同一段连续编码，块之间才是拼接点 */
+function buildDiscontinuityGroups(segments: Segment[]): number[][] {
+  const groups: number[][] = [];
+  let cur: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const hasDisc = segments[i].tags.some((t) =>
+      t.trim().toUpperCase().startsWith('#EXT-X-DISCONTINUITY')
+    );
+    if (hasDisc && cur.length > 0) {
+      groups.push(cur);
+      cur = [];
+    }
+    cur.push(i);
+  }
+  if (cur.length > 0) groups.push(cur);
+  return groups;
+}
+
+/** TVBox 的 URL 前缀聚类键：抹掉末尾序号与扩展名后剩下的路径模板 */
+function urlPrefixKey(url: string): string | null {
+  const u = unwrapSegmentUrl(url);
+  const lastDot = u.lastIndexOf('.');
+  const cut = lastDot - 4;
+  if (cut <= 4) return null;
+  return u.slice(0, cut);
+}
+
+function urlHostKey(url: string): string | null {
+  const u = unwrapSegmentUrl(url);
+  const m = u.match(/^https?:\/\/[^/]+/i);
+  return m ? m[0] : null;
+}
+
+interface ClusterStat {
+  keys: (string | null)[];
+  map: Map<string, number>;
+  maxKey: string;
+  maxCount: number;
+  ratio: number;
+}
+
+function buildCluster(segments: Segment[], keyFn: (u: string) => string | null): ClusterStat | null {
+  const map = new Map<string, number>();
+  const keys: (string | null)[] = [];
+  let valid = 0;
+  for (const s of segments) {
+    const k = keyFn(s.url);
+    keys.push(k);
+    if (!k) continue;
+    map.set(k, (map.get(k) || 0) + 1);
+    valid += 1;
+  }
+  if (valid === 0 || map.size <= 1) return null;
+  let maxKey = '';
+  let maxCount = 0;
+  for (const [k, c] of map) {
+    if (c > maxCount) {
+      maxKey = k;
+      maxCount = c;
+    }
+  }
+  return { keys, map, maxKey, maxCount, ratio: maxCount / valid };
+}
+
+/**
+ * 规则 A：少数派 URL（对应 TVBox removeMinorityUrl）
+ *
+ * 正片切片通常来自同一个路径模板 / 同一个域名，广告是外来的另一套地址。
+ * 只有当主流地址占比 ≥80% 时才动刀；另外所有来源的片数都很大（多 CDN 轮播）时直接放弃。
+ */
+function detectMinorityUrl(segments: Segment[]): Set<number> {
+  const hits = new Set<number>();
+  if (segments.length < 4) return hits;
+
+  let stat = buildCluster(segments, urlPrefixKey);
+  if (!stat || stat.ratio < 0.8) {
+    stat = buildCluster(segments, urlHostKey);
+    if (!stat || stat.ratio < 0.8) return hits;
+    // 多 CDN 轮转保护：每个来源的片数都 > 15，说明是换源轮播而不是广告
+    let allBig = true;
+    for (const c of stat.map.values()) {
+      if (c <= 15) {
+        allBig = false;
+        break;
+      }
+    }
+    if (allBig) return hits;
+  }
+
+  for (let i = 0; i < segments.length; i++) {
+    const k = stat.keys[i];
+    if (!k || k === stat.maxKey) continue;
+    hits.add(i);
+  }
+
+  // 熔断：删掉的比例超过 30% 说明判定反了
+  if (hits.size > segments.length * 0.3) hits.clear();
+  return hits;
+}
+
+/**
+ * 规则 B：时长离群（中位数基准）
+ *
+ * 正片切片时长基本一致，广告素材往往是另一种时长（尤其是整段贴片广告）。
+ */
+function detectDurationOutliers(segments: Segment[], isVod: boolean): Set<number> {
+  const hits = new Set<number>();
+  // 直播窗口里时长波动更常见，只给点播做这条判定
+  if (!isVod) return hits;
+  const durations = segments
+    .map((s) => s.duration)
+    .filter((d): d is number => d !== null && d > 0);
+  if (durations.length < 6) return hits;
+
+  const mid = median(durations);
+  if (mid <= 0) return hits;
+
+  const outliers: number[] = [];
+  for (let i = 0; i < segments.length; i++) {
+    const d = segments[i].duration;
+    if (d === null) continue;
+    if (d <= 0.2 || d >= 120) {
+      outliers.push(i);
+      continue;
+    }
+    if (d > mid * 2 || d < mid * 0.5) outliers.push(i);
+  }
+  if (outliers.length === 0) return hits;
+  // 离群片太多说明"主流"可能就是广告，放弃本规则
+  if (outliers.length > Math.max(2, Math.floor(segments.length * 0.2))) return hits;
+
+  outliers.forEach((i) => hits.add(i));
+  return hits;
+}
+
+/**
+ * 规则 C：片头 / 片尾贴片（TVBox 没有，针对短剧实测补的）
+ *
+ * 短剧常见形态：正片每片 5 秒左右，片头、片尾各塞一段 15~30 秒的整段广告。
+ * 用"去掉首尾各 2 片后的中位数"作基准，只从两端向内扫描连续异常片，
+ * 一旦遇到正常片就停（广告都是贴在两端的连续块）。
+ */
+function detectHeadTailAds(segments: Segment[], isVod: boolean): Set<number> {
+  const hits = new Set<number>();
+  const n = segments.length;
+  if (!isVod || n < 5) return hits;
+
+  const inner = segments
+    .slice(2, n - 2)
+    .map((s) => s.duration)
+    .filter((d): d is number => d !== null && d > 0);
+  const all = segments
+    .map((s) => s.duration)
+    .filter((d): d is number => d !== null && d > 0);
+  const ref = median(inner.length >= 3 ? inner : all);
+  if (ref <= 0) return hits;
+
+  const scan = Math.min(3, Math.max(1, Math.floor(n * 0.1)));
+  const cap = Math.max(2, Math.floor(n * 0.15));
+
+  for (let i = 0; i < scan; i++) {
+    const d = segments[i].duration;
+    if (d === null) break;
+    if (d > ref * 1.6 || d < ref * 0.6) hits.add(i);
+    else break;
+  }
+  for (let k = 0; k < scan; k++) {
+    const i = n - 1 - k;
+    const d = segments[i].duration;
+    if (d === null) break;
+    if (d > ref * 1.6 || d < ref * 0.6) hits.add(i);
+    else break;
+  }
+
+  if (hits.size > cap) hits.clear();
+  return hits;
+}
+
+/** EXTINF 时长的小数位数 */
+function decimalPrecision(text: string): number {
+  const dot = text.indexOf('.');
+  return dot < 0 ? 0 : text.length - dot - 1;
+}
+
+/**
+ * 规则 D：小数位精度成块判定（对应 TVBox cleanDecimalPrecisionGroups）
+ * 正片精度稳定（如都是 6 位），广告素材拼接后常是另一种精度。
+ */
+function detectPrecisionGroups(segments: Segment[], groups: number[][]): Set<number> {
+  const hits = new Set<number>();
+  if (groups.length < 2) return hits;
+
+  const counts = new Map<number, number>();
+  let total = 0;
+  for (const s of segments) {
+    if (!s.durationText) continue;
+    const p = decimalPrecision(s.durationText);
+    counts.set(p, (counts.get(p) || 0) + 1);
+    total += 1;
+  }
+  if (total < 8 || counts.size < 2) return hits;
+
+  let major = -1;
+  let majorCount = 0;
+  for (const [p, c] of counts) {
+    if (c > majorCount) {
+      major = p;
+      majorCount = c;
+    }
+  }
+  if (major < 0 || majorCount / total < 0.7) return hits;
+
+  const marked: number[][] = [];
+  let removable = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    if (gi === groups.length - 1) continue;
+    const g = groups[gi];
+    if (g.length === 0 || g.length > MAX_AD_BLOCK_SIZE) continue;
+    let tot = 0;
+    let mis = 0;
+    for (const i of g) {
+      const s = segments[i];
+      if (!s.durationText) continue;
+      tot += 1;
+      if (decimalPrecision(s.durationText) !== major) mis += 1;
+    }
+    if (tot > 0 && mis === tot) {
+      marked.push(g);
+      removable += g.length;
+    }
+  }
+  if (removable === 0 || removable > Math.max(2, Math.floor(segments.length * 0.3))) return hits;
+
+  marked.forEach((g) => g.forEach((i) => hits.add(i)));
+  return hits;
+}
+
+/** 帧率小数特征集合：30 / 25 / 24 fps（30 与 24 含 NTSC 变体） */
+const FRAME_RATE_FEATURES: Record<number, Set<string>> = (() => {
+  const make = (rate: number, maxFrames: number): Set<string> => {
+    const set = new Set<string>();
+    for (let f = 1; f <= maxFrames; f++) {
+      const frac = (f / rate) % 1;
+      for (let scale = 3; scale <= 6; scale++) {
+        const v = Number(frac.toFixed(scale));
+        if (v !== 0) set.add(String(v));
+      }
+    }
+    return set;
+  };
+  const s30 = new Set([...make(30, 300), ...make(30 / 1.001, 300)]);
+  const s25 = make(25, 25);
+  const s24 = new Set([...make(24, 240), ...make(24 / 1.001, 240)]);
+  return { 30: s30, 25: s25, 24: s24 };
+})();
+
+function isFrameAligned(duration: number, rate: number): boolean {
+  const set = FRAME_RATE_FEATURES[rate];
+  if (!set) return false;
+  const frac = duration - Math.floor(duration);
+  for (let scale = 3; scale <= 6; scale++) {
+    if (set.has(String(Number(frac.toFixed(scale))))) return true;
+  }
+  return false;
+}
+
+/** 只对齐其中一种帧率才算数，避免歧义 */
+function getExclusiveFrameRate(duration: number): number {
+  const a30 = isFrameAligned(duration, 30);
+  const a25 = isFrameAligned(duration, 25);
+  const a24 = isFrameAligned(duration, 24);
+  if (a30 && !a25 && !a24) return 30;
+  if (a25 && !a30 && !a24) return 25;
+  if (a24 && !a30 && !a25) return 24;
+  return 0;
+}
+
+function findDominantFrameRate(segments: Segment[]): number {
+  let c30 = 0;
+  let c25 = 0;
+  let c24 = 0;
+  for (const s of segments) {
+    if (s.duration === null) continue;
+    const fr = getExclusiveFrameRate(s.duration);
+    if (fr === 30) c30 += 1;
+    else if (fr === 25) c25 += 1;
+    else if (fr === 24) c24 += 1;
+  }
+  const max = Math.max(c30, Math.max(c25, c24));
+  if (max < 2) return 0;
+  if ((c30 === max ? 1 : 0) + (c25 === max ? 1 : 0) + (c24 === max ? 1 : 0) !== 1) return 0;
+  return c30 === max ? 30 : c25 === max ? 25 : 24;
+}
+
+/** 规则 E：帧率对齐成块判定（对应 TVBox cleanFrameRateGroups） */
+function detectFrameRateGroups(segments: Segment[], groups: number[][]): Set<number> {
+  const hits = new Set<number>();
+  if (groups.length < 2) return hits;
+
+  const master = findDominantFrameRate(segments);
+  if (master === 0) return hits;
+
+  const marked: number[][] = [];
+  let removable = 0;
+  for (let gi = 0; gi < groups.length; gi++) {
+    if (gi === groups.length - 1) continue;
+    const g = groups[gi];
+    if (g.length === 0 || g.length > MAX_AD_BLOCK_SIZE) continue;
+    let matched = 0;
+    let mismatched = 0;
+    for (const i of g) {
+      const d = segments[i].duration;
+      if (d === null) continue;
+      const fr = getExclusiveFrameRate(d);
+      if (fr === master) matched += 1;
+      else if (fr !== 0) mismatched += 1;
+    }
+    if (mismatched > 0 && mismatched >= matched) {
+      marked.push(g);
+      removable += g.length;
+    }
+  }
+  if (removable === 0 || removable > adSegmentLimit(segments)) return hits;
+
+  marked.forEach((g) => g.forEach((i) => hits.add(i)));
+  return hits;
+}
+
+/**
+ * 广告片数量上限（对应 TVBox getAdSegmentLimit）：按总时长分级，
+ * 一部片里广告就那么多，超过说明判定反了。
+ */
+function adSegmentLimit(segments: Segment[]): number {
+  let total = 0;
+  for (const s of segments) if (s.duration) total += s.duration;
+  const minutes = total / 60;
+  if (minutes <= 30) return 18;
+  if (minutes <= 60) return 24;
+  if (minutes <= 90) return 30;
+  return 36;
+}
+
 /** 内置默认规则：返回被判定为广告的分片下标集合 */
-function detectAdSegments(segments: Segment[]): Set<number> {
+function detectAdSegments(segments: Segment[], isVod: boolean): Set<number> {
   const hits = new Set<number>();
 
-  // 规则 1：CUE-OUT 与 CUE-IN 之间整段视为广告（标记行已在解析阶段剔除，
-  // 这里通过"分片是否夹在被剔除的标记之间"无法还原，因此改用 URL/时长判定兜底）
+  // 规则 0：URL 关键词 / 中文广告注释，命中即删（高置信）
   for (let i = 0; i < segments.length; i++) {
     const s = segments[i];
     if (isAdUrl(unwrapSegmentUrl(s.url)) || isAdComment(s.comment)) hits.add(i);
   }
 
-  // 规则 2：时长异常。只在"异常片占比很小"时才采信，避免主流时长被误判
-  const total = segments.length;
-  if (total >= 8) {
-    const outliers: number[] = [];
-    for (let i = 0; i < total; i++) {
-      const d = segments[i].duration;
-      if (d === null) continue;
-      if (d <= 0.2 || d >= 120) outliers.push(i);
-    }
-    if (outliers.length > 0 && outliers.length <= Math.max(2, Math.floor(total * 0.2))) {
-      outliers.forEach((i) => hits.add(i));
-    }
-  }
+  const groups = buildDiscontinuityGroups(segments);
+  const merge = (extra: Set<number>) => extra.forEach((i) => hits.add(i));
+
+  merge(detectMinorityUrl(segments)); // 规则 A：少数派 URL
+  merge(detectDurationOutliers(segments, isVod)); // 规则 B：时长离群
+  merge(detectHeadTailAds(segments, isVod)); // 规则 C：片头 / 片尾贴片
+  merge(detectPrecisionGroups(segments, groups)); // 规则 D：小数位精度成块
+  merge(detectFrameRateGroups(segments, groups)); // 规则 E：帧率对齐成块
 
   return hits;
 }
@@ -393,9 +759,22 @@ export function filterWithDefaultRules(
     return { content: raw, removed: 0, total: 0, method: 'no-change' };
   }
 
-  const toRemove = detectAdSegments(parsed.segments);
+  const isVod = /#EXT-X-ENDLIST/i.test(raw);
+  const toRemove = detectAdSegments(parsed.segments, isVod);
   if (toRemove.size === 0) {
     return { content: raw, removed: 0, total, method: 'no-change' };
+  }
+
+  // 总量闸门：一部片里广告就那么多（按时长分级 18/24/30/36），超了说明判定反了
+  const limit = adSegmentLimit(parsed.segments) * (hasExplicitAdMarkers(raw) ? 2 : 1);
+  if (toRemove.size > limit) {
+    return {
+      content: raw,
+      removed: 0,
+      total,
+      method: 'aborted',
+      reason: `命中 ${toRemove.size} 片，超过按时长分级的广告上限 ${limit}，放弃过滤`,
+    };
   }
 
   // 安全阀：删太多说明判定可能反了，直接放弃
@@ -521,9 +900,22 @@ export function filterM3U8Ads(raw: string, options: AdFilterOptions = {}): AdFil
         if (isValidFilteredContent(out, raw)) {
           const before = (raw.match(/^\s*#EXTINF:/gm) || []).length;
           const after = ((out as string).match(/^\s*#EXTINF:/gm) || []).length;
+          const customRemoved = Math.max(0, before - after);
+
+          // 自定义代码通常只做关键词匹配，这里再叠一层内置增强规则：
+          // 少数派 URL / 时长离群 / 片头片尾贴片 / 精度与帧率成块判定。
+          const extra = filterWithDefaultRules(out as string, maxRemoveRatio);
+          if (extra.removed > 0) {
+            return {
+              content: extra.content,
+              removed: customRemoved + extra.removed,
+              total: before,
+              method: 'custom+default',
+            };
+          }
           return {
             content: out as string,
-            removed: Math.max(0, before - after),
+            removed: customRemoved,
             total: before,
             method: 'custom',
           };

@@ -35,7 +35,7 @@
 
 ## 📢 项目说明
 
-> 🌿 **分支说明**：本仓库默认分支是 `feat/server-side-ad-filter`（去广告版，首页看到的 README 就是它）；
+> 🌿 **分支说明**：本仓库默认分支是 `adfilter`（去广告版，首页看到的 README 就是它）；
 > `main` 分支与上游 [SzeMeng76/LunaTV](https://github.com/SzeMeng76/LunaTV) 保持一致，方便跟随上游更新。
 > 去广告版的镜像与发布说明见 [Releases](https://github.com/QQ169876/LunaTV/releases)。
 

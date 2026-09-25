@@ -87,7 +87,7 @@ docker logout ghcr.io
 ### 办法 3：把源码给他，让他自己构建
 
 ```bash
-git clone -b feat/server-side-ad-filter https://github.com/QQ169876/LunaTV.git
+git clone -b adfilter https://github.com/QQ169876/LunaTV.git
 cd LunaTV
 docker build -f Dockerfile.adfilter -t lunatv:adfilter .
 ```
@@ -101,7 +101,7 @@ docker build -f Dockerfile.adfilter -t lunatv:adfilter .
 
 ## 二、同步上游会不会覆盖我的改动
 
-> 🌿 本仓库的分支约定：**默认分支 = `feat/server-side-ad-filter`（去广告版，对外展示）**，
+> 🌿 本仓库的分支约定：**默认分支 = `adfilter`（去广告版，对外展示）**，
 > **`main` 保持与上游完全一致**（干净的上游代码，专门用来跟上游同步）。
 > 所以平时改动都提交在去广告分支上，不要往 main 上合，这样上游发新版时 main 可以直接快进同步，不会打架。
 
