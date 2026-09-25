@@ -171,3 +171,38 @@ docker ps --format '{{.Names}} {{.Image}} {{.Status}}'   # 看容器跑的是哪
 docker logs --tail 50 moontv-2       # 看容器日志
 docker stats --no-stream moontv-2    # 看占用
 ```
+
+## 四、发一个新的 Release（每次更新镜像后）
+
+GitHub 仓库右侧的 Releases 就是"版本发布页"，别人在这里能一眼看到镜像地址、
+启动命令和这次改了什么。当前版本：**[v6.6.4-adfilter](https://github.com/QQ169876/LunaTV/releases/tag/v6.6.4-adfilter)**。
+
+发新版的流程（在服务器上做，PAT 需要有 `repo` 权限）：
+
+```bash
+# 1. 构建并推镜像
+docker build -f Dockerfile.adfilter -t lunatv:adfilter-latest .
+docker tag lunatv:adfilter-latest ghcr.io/qq169876/lunatv:latest
+docker tag lunatv:adfilter-latest ghcr.io/qq169876/lunatv:adfilter-latest
+docker tag lunatv:adfilter-latest ghcr.io/qq169876/lunatv:6.6.4-adfilter-<新提交号>
+echo $TOKEN | docker login ghcr.io -u qq169876 --password-stdin
+docker push ghcr.io/qq169876/lunatv --all-tags
+
+# 2. 导出离线包（可选，作为 Release 附件）
+docker save lunatv:adfilter-latest | gzip -1 > /root/docker-images/lunatv-adfilter-<新提交号>.tar.gz
+
+# 3. 创建 Release（body 里写镜像地址、启动命令、改动说明）
+curl -X POST https://api.github.com/repos/QQ169876/LunaTV/releases \
+  -H "Authorization: token $TOKEN" -H "Content-Type: application/json" \
+  -d '{"tag_name":"v6.6.4-adfilter-<新提交号>","name":"v6.6.4-adfilter 去广告版",
+       "target_commitish":"main","draft":false,"prerelease":false,"body":"见上一版格式"}'
+
+# 4. 上传附件（用第 3 步返回的 upload_url）
+curl -X POST "<upload_url>?name=lunatv-adfilter-<新提交号>.tar.gz" \
+  -H "Authorization: token $TOKEN" -H "Content-Type: application/gzip" \
+  --data-binary @/root/docker-images/lunatv-adfilter-<新提交号>.tar.gz
+```
+
+> Release 的正文格式参考现在的 v6.6.4-adfilter：先写"这个版本是什么"，
+> 再给 `docker pull` / `docker run` / compose 片段，然后是"拉完还要做一步"（后台开关），
+> 最后是本次改动清单和文档链接。
