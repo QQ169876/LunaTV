@@ -35,6 +35,10 @@
 
 ## 📢 项目说明
 
+> 🌿 **分支说明**：本仓库默认分支是 `feat/server-side-ad-filter`（去广告版，首页看到的 README 就是它）；
+> `main` 分支与上游 [SzeMeng76/LunaTV](https://github.com/SzeMeng76/LunaTV) 保持一致，方便跟随上游更新。
+> 去广告版的镜像与发布说明见 [Releases](https://github.com/QQ169876/LunaTV/releases)。
+
 本项目是在 **MoonTV** 基础上进行的深度二次开发版本，从 **v4.3.1** 版本开始，持续迭代至当前 **v6.6.3**，累计新增 60+ 重大功能模块，400+ 细节优化。所有新增功能详见 [CHANGELOG](CHANGELOG)。
 
 ## ⚠️ 重要声明
