@@ -27,6 +27,7 @@
 ![Docker Ready](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
 ![Version](https://img.shields.io/badge/Version-6.6.3-orange)
 [![去广告版镜像](https://img.shields.io/badge/%E5%8E%BB%E5%B9%BF%E5%91%8A%E7%89%88%E9%95%9C%E5%83%8F-ghcr.io%2Fqq169876%2Flunatv-2496ED?logo=docker)](https://github.com/users/QQ169876/packages/container/package/lunatv)
+[![Release](https://img.shields.io/github/v/release/QQ169876/LunaTV?include_prereleases&label=Release&color=2ea44f)](https://github.com/QQ169876/LunaTV/releases)
 
 </div>
 
@@ -156,6 +157,8 @@ docker run -d --name moontv --restart always -p 3000:3000 \
 想让 TV / 第三方播放器也走服务端过滤，再打开「对外播放地址改写为本站代理」。
 
 可用标签：`latest`（最新）、`adfilter-latest`、`6.6.4-adfilter-6cd5e04`（锁死版本）。
+
+发布页（含离线镜像包、完整更新说明）：<https://github.com/QQ169876/LunaTV/releases>
 完整说明（离线包、自建镜像、如何同步上游）见 [ADFILTER_DOCKER.md](docs/advanced/ADFILTER_DOCKER.md)。
 
 **详细部署指南**：[查看完整部署文档](docs/deployment/DEPLOYMENT.md)

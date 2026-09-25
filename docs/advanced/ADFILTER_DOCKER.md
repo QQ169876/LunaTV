@@ -31,6 +31,9 @@ docker run -d --name moontv --restart always -p 3000:3000 \
 
 包页面：<https://github.com/users/QQ169876/packages/container/package/lunatv>
 
+发布页（Release，含更新说明与离线镜像包）：
+<https://github.com/QQ169876/LunaTV/releases/tag/v6.6.4-adfilter>
+
 > 注意：镜像是**按当前源码编译好的成品**，不含任何配置。
 > 拉完还要在后台「去广告」里打开开关（见 SERVER_AD_FILTER.md）；
 > 想让 TV / 第三方播放器也走服务端过滤，再打开「对外播放地址改写为本站代理」。
