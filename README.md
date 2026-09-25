@@ -26,6 +26,7 @@
 ![License](https://img.shields.io/badge/License-CC%20BY--NC--SA%204.0-green)
 ![Docker Ready](https://img.shields.io/badge/Docker-ready-blue?logo=docker)
 ![Version](https://img.shields.io/badge/Version-6.6.3-orange)
+[![Ad--Free Image](https://img.shields.io/badge/%E5%8E%BB%E5%B9%BF%E5%91%8A%E7%89%88%E9%95%9C%E5%83%8F-ghcr.io%2Fqq169876%2Flunatv-2496ED?logo=docker)](https://github.com/users/QQ169876/packages/container/package/lunatv)
 
 </div>
 
@@ -100,6 +101,14 @@
   - 统一的 API 缓存策略（2小时）
   - 减少不必要的网络请求和重复渲染
 
+### 🧹 服务端去广告增强
+
+- **服务端过滤广告分片**：在 `/api/proxy/m3u8` 返回前直接剔除广告分片并做连续性修复，网页 / TV / 手机 / 第三方播放器拿到的都是干净列表，不再依赖浏览器端注入
+- **沿用同一份自定义规则**：后台「自定义去广告」代码在服务端同样生效，异常或非法返回自动降级内置规则 → [使用文档](docs/advanced/CUSTOM_AD_FILTER.md)
+- **对外播放地址改写**：可把剧集 / 短剧地址统一改写成本站代理（默认关闭），TVBox 等第三方客户端也能享受过滤 → [服务端去广告说明](docs/advanced/SERVER_AD_FILTER.md)
+- **按客户端分流**：浏览器走同源分片代理保证可播；TV / 第三方走「清单代理 + 分片直连」，几乎不额外占用服务器带宽
+- **开箱即用的镜像**：去广告版已构建并发布为公开镜像 `ghcr.io/qq169876/lunatv:latest` → [镜像说明](docs/advanced/ADFILTER_DOCKER.md)
+
 ## 🚀 快速开始
 
 ### Docker 部署（推荐）
@@ -130,6 +139,24 @@ pnpm install
 # 启动开发服务器
 pnpm dev
 ```
+
+### 去广告版镜像（免编译，直接拉）
+
+如果只想用起来、不想克隆源码和编译，可以直接拉取本仓库构建好的去广告版公开镜像：
+
+```bash
+docker pull ghcr.io/qq169876/lunatv:latest
+
+docker run -d --name moontv --restart always -p 3000:3000 \
+  -e USERNAME=admin -e PASSWORD=改成自己的密码 \
+  ghcr.io/qq169876/lunatv:latest
+```
+
+访问 `http://localhost:3000`，登录后到「管理员后台 → 去广告」打开开关即可生效；
+想让 TV / 第三方播放器也走服务端过滤，再打开「对外播放地址改写为本站代理」。
+
+可用标签：`latest`（最新）、`adfilter-latest`、`6.6.4-adfilter-6cd5e04`（锁死版本）。
+完整说明（离线包、自建镜像、如何同步上游）见 [ADFILTER_DOCKER.md](docs/advanced/ADFILTER_DOCKER.md)。
 
 **详细部署指南**：[查看完整部署文档](docs/deployment/DEPLOYMENT.md)
 
@@ -166,7 +193,7 @@ pnpm dev
 - 🔧 [代理配置](docs/advanced/PROXY_CONFIG.md)
 - 🚫 [广告过滤](docs/advanced/CUSTOM_AD_FILTER.md)
 - 🧹 [服务端去广告（网页/TV/手机端统一生效）](docs/advanced/SERVER_AD_FILTER.md)
-- 📦 去广告版镜像（免编译直接拉）：`docker pull ghcr.io/qq169876/lunatv:latest` —— 详见 [ADFILTER_DOCKER.md](docs/advanced/ADFILTER_DOCKER.md)
+- 📦 [去广告版镜像说明](docs/advanced/ADFILTER_DOCKER.md) - `docker pull ghcr.io/qq169876/lunatv:latest` 免编译直接跑 / 自建 / 同步上游
 - ⏭️ [跳过控制器](docs/advanced/SKIP_CONTROLLER_GUIDE.md)
 
 ## 🔧 技术栈

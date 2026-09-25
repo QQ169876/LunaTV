@@ -28,6 +28,8 @@
 ### ⚙️ 高级配置
 - [代理配置](advanced/PROXY_CONFIG.md) - 双层代理架构配置指南
 - [自定义广告过滤](advanced/CUSTOM_AD_FILTER.md) - 广告拦截规则自定义
+- [服务端去广告](advanced/SERVER_AD_FILTER.md) - 网页 / TV / 手机端统一生效的服务端过滤
+- [去广告版镜像](advanced/ADFILTER_DOCKER.md) - 公开镜像拉取、离线包、自建与同步上游
 - [跳过控制器指南](advanced/SKIP_CONTROLLER_GUIDE.md) - 片头片尾自动跳过配置
 
 ### 📱 移动端
