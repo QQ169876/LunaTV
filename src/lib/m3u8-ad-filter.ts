@@ -304,6 +304,14 @@ function urlPrefixKey(url: string): string | null {
   return u.slice(0, cut);
 }
 
+/** 目录级聚类键：去掉文件名，只看分片所在目录（很多源的分片名是随机的） */
+function urlDirKey(url: string): string | null {
+  const u = unwrapSegmentUrl(url);
+  const i = u.lastIndexOf('/');
+  if (i <= 8) return null;
+  return u.slice(0, i + 1);
+}
+
 function urlHostKey(url: string): string | null {
   const u = unwrapSegmentUrl(url);
   const m = u.match(/^https?:\/\/[^/]+/i);
@@ -351,7 +359,12 @@ function detectMinorityUrl(segments: Segment[]): Set<number> {
   const hits = new Set<number>();
   if (segments.length < 4) return hits;
 
-  let stat = buildCluster(segments, urlPrefixKey);
+  // 依次用"目录 → 路径前缀 → 域名"三种粒度聚类，取第一个能分出主流的粒度。
+  // 目录粒度最实用：很多源的分片名是随机串，只有广告片会落在另一个目录里。
+  let stat = buildCluster(segments, urlDirKey);
+  if (!stat || stat.ratio < 0.8) {
+    stat = buildCluster(segments, urlPrefixKey);
+  }
   if (!stat || stat.ratio < 0.8) {
     stat = buildCluster(segments, urlHostKey);
     if (!stat || stat.ratio < 0.8) return hits;
@@ -395,14 +408,19 @@ function detectDurationOutliers(segments: Segment[], isVod: boolean): Set<number
   if (mid <= 0) return hits;
 
   const outliers: number[] = [];
+  const last = segments.length - 1;
   for (let i = 0; i < segments.length; i++) {
     const d = segments[i].duration;
     if (d === null) continue;
+    // 最后一片常常是不满时长的自然结尾（例如正片 4 秒、结尾只剩 1.2 秒），
+    // 这种"偏短"不能当广告，否则会啃掉正片尾巴。偏长则照样判异常。
+    const isShortTail = i === last && d < mid;
     if (d <= 0.2 || d >= 120) {
-      outliers.push(i);
+      if (!isShortTail) outliers.push(i);
       continue;
     }
-    if (d > mid * 2 || d < mid * 0.5) outliers.push(i);
+    if (d > mid * 2) outliers.push(i);
+    else if (d < mid * 0.4 && !isShortTail) outliers.push(i);
   }
   if (outliers.length === 0) return hits;
   // 离群片太多说明"主流"可能就是广告，放弃本规则
@@ -437,17 +455,18 @@ function detectHeadTailAds(segments: Segment[], isVod: boolean): Set<number> {
   const scan = Math.min(3, Math.max(1, Math.floor(n * 0.1)));
   const cap = Math.max(2, Math.floor(n * 0.15));
 
+  // 只认"明显比正片长"的贴片：片尾那片不满时长的自然结尾不能算广告
   for (let i = 0; i < scan; i++) {
     const d = segments[i].duration;
     if (d === null) break;
-    if (d > ref * 1.6 || d < ref * 0.6) hits.add(i);
+    if (d > ref * 1.6) hits.add(i);
     else break;
   }
   for (let k = 0; k < scan; k++) {
     const i = n - 1 - k;
     const d = segments[i].duration;
     if (d === null) break;
-    if (d > ref * 1.6 || d < ref * 0.6) hits.add(i);
+    if (d > ref * 1.6) hits.add(i);
     else break;
   }
 
