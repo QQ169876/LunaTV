@@ -139,6 +139,47 @@ export async function GET(request: Request) {
     const _contentLength = parseInt(response?.headers.get('content-length') || '0', 10);
     let bytesTransferred = 0;
 
+    // 🧯 假分片检测：部分失效/风控的源站会用图片占位顶替视频分片
+    // （content-type 是 image/*，内容是 JFIF/PNG/GIF）。
+    // 播放器拿到这种数据解不出流，表现就是"一直加载中"永远不出画面。
+    // 这里直接明确失败，让播放器尽快报错 / 换源，而不是干等。
+    const contentTypeLower = (originalContentType || '').toLowerCase();
+    if (contentTypeLower.startsWith('image/')) {
+      try {
+        const buf = await response.arrayBuffer();
+        const head = new Uint8Array(buf.slice(0, 8));
+        const isJpeg = head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+        const isPng =
+          head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+        const isGif = head[0] === 0x47 && head[1] === 0x49 && head[2] === 0x46;
+
+        if (isJpeg || isPng || isGif) {
+          segmentStats.errors++;
+          return NextResponse.json(
+            {
+              error:
+                '上游返回的是图片占位而不是视频分片，该播放源已失效，请换源播放',
+              upstreamContentType: originalContentType,
+            },
+            { status: 415 }
+          );
+        }
+
+        // content-type 伪装成图片、实际是真实音视频数据（常见于 .jpeg/.png 后缀的分片）
+        headers.set('Content-Type', 'video/mp2t');
+        return new Response(buf, { headers, status: 200 });
+      } catch (e) {
+        segmentStats.errors++;
+        return NextResponse.json(
+          {
+            error: '读取上游分片失败',
+            detail: e instanceof Error ? e.message : String(e),
+          },
+          { status: 502 }
+        );
+      }
+    }
+
     // 优化的流式传输，带背压控制
     const stream = new ReadableStream({
       start(controller) {
