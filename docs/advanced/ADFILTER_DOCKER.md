@@ -27,7 +27,7 @@ docker run -d --name moontv --restart always -p 3000:3000 \
 | --- | --- |
 | `ghcr.io/qq169876/lunatv:latest` | 最新去广告版，最省事就用这个 |
 | `ghcr.io/qq169876/lunatv:adfilter-latest` | 同上，名字里带 adfilter 好辨认 |
-| `ghcr.io/qq169876/lunatv:6.6.4-adfilter-504e6cb` | 锁死版本（对应源码提交 `504e6cb`），想固定不变用这个 |
+| `ghcr.io/qq169876/lunatv:6.6.4-adfilter-efab810` | 锁死版本（对应源码提交 `efab810`），想固定不变用这个 |
 
 包页面：<https://github.com/users/QQ169876/packages/container/package/lunatv>
 
