@@ -5,7 +5,7 @@ import { NextResponse } from "next/server";
 import { getConfig } from "@/lib/config";
 import { getBaseUrl, resolveUrl } from "@/lib/live";
 import { filterM3U8Ads } from "@/lib/m3u8-ad-filter";
-import { isBrowserRequest } from "@/lib/server-play-url";
+import { isBrowserRequest, resolveSegmentProxyMode } from "@/lib/server-play-url";
 import { readTextLimited } from "@/lib/proxy-security";
 import { DEFAULT_USER_AGENT } from "@/lib/user-agent";
 
@@ -92,10 +92,9 @@ export async function GET(request: Request) {
 
   const { searchParams } = new URL(request.url);
   const url = searchParams.get('url');
-  // 浏览器请求强制走同源分片代理：源站分片大多没有 CORS 头，
-  // 一旦直连就会被浏览器拦掉，网页端表现为"播不了"。
-  const allowCORS =
-    searchParams.get('allowCORS') === 'true' && !isBrowserRequest(request);
+  // 分片到底走本站中转还是播放器直连，由「后台策略 > 客户端偏好」决定，
+  // 需要后台配置才能判定，所以在下面拿到 config 之后再算，这里先给个兜底值。
+  let allowCORS = false;
   const source = searchParams.get('moontv-source');
   
   if (!url) {
@@ -104,6 +103,18 @@ export async function GET(request: Request) {
   }
 
   const config = await getConfig();
+
+  // 分片走法最终判定：后台 ProxyPlaybackMode 强制时以后台为准，
+  // 后台设为"跟随客户端"时听 URL 里的 seg 参数（网页端设置面板写的那个）。
+  const segmentMode = resolveSegmentProxyMode({
+    config,
+    requested:
+      searchParams.get('seg') ||
+      (searchParams.get('allowCORS') === 'true' ? 'direct' : null),
+    isBrowser: isBrowserRequest(request),
+  });
+  allowCORS = segmentMode === 'direct';
+
   // moontv-source 仅用于直播源的 UA 定制；点播场景（VOD 直连失败降级）不传该参数，
   // 此时使用浏览器 UA 默认值而非要求匹配 LiveConfig，否则会 404 拒绝点播流量。
   let ua = DEFAULT_USER_AGENT;
@@ -492,7 +503,7 @@ function rewriteM3U8Content(content: string, baseUrl: string, req: Request, allo
           // 把当前请求的referer参数透传到variant URL，否则下一跳会因为没有Referer被上游拒绝
           // allowCORS（只代理清单、分片直连）必须一并透传，否则下一层会退化成全流量代理
           const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}${sourceParam}${refererParam}${
-            allowCORS ? '&allowCORS=true' : ''
+            allowCORS ? '&allowCORS=true&seg=direct' : '&seg=relay'
           }`;
           rewrittenLines.push(proxyUrl);
         } else {
@@ -618,7 +629,7 @@ function rewriteMediaUri(line: string, baseUrl: string, proxyBase: string, varia
     try {
       const resolvedUrl = resolveUrl(baseUrl, originalUri);
       const proxyUrl = `${proxyBase}/m3u8?url=${encodeURIComponent(resolvedUrl)}${sourceParam}${
-        allowCORS ? '&allowCORS=true' : ''
+        allowCORS ? '&allowCORS=true&seg=direct' : '&seg=relay'
       }`;
       return line.replace(uriMatch[0], `URI="${proxyUrl}"`);
     } catch (error) {

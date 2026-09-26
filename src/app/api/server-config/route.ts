@@ -30,6 +30,12 @@ export async function GET(request: NextRequest) {
     Version: CURRENT_VERSION,
     DownloadEnabled: config.DownloadConfig?.enabled ?? true,
     requireInviteCode: config.UserConfig?.RequireInviteCode ?? false,
+    // 后台统一的分片策略，网页端据此判断是否让自己那边的开关失效（不涉及任何敏感信息）
+    ProxyPlaybackMode:
+      config.SiteConfig?.ProxyPlaybackMode === 'relay' ||
+      config.SiteConfig?.ProxyPlaybackMode === 'direct'
+        ? config.SiteConfig.ProxyPlaybackMode
+        : 'follow',
   };
 
   // 添加 Telegram 登录配置（仅公开必要信息）

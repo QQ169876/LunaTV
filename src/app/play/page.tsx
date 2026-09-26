@@ -12,6 +12,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { toast } from 'sonner';
 
 import { useDownload } from '@/contexts/DownloadContext';
+import { applySegmentProxyPreference } from '@/lib/playback-mode';
 import { normalizeDownloadSource } from '@/lib/download';
 import { useDanmu } from '@/hooks/useDanmu';
 import type { DanmuManualOverride } from '@/hooks/useDanmu';
@@ -214,6 +215,21 @@ interface WakeLockSentinel {
   release(): Promise<void>;
   addEventListener(type: 'release', listener: () => void): void;
   removeEventListener(type: 'release', listener: () => void): void;
+}
+
+/**
+ * 把网页端「分片全量中转 / 直连」偏好写进详情里的剧集地址。
+ * 服务端只在拿不到明确偏好时才按后台策略兜底，所以这里改写之后
+ * 后台 ProxyPlaybackMode 仍然是最终裁判（见 api/proxy/m3u8）。
+ */
+function applyPlaybackPreference(detail: SearchResult | null): SearchResult | null {
+  if (!detail || !Array.isArray(detail.episodes)) return detail;
+  return {
+    ...detail,
+    episodes: detail.episodes.map(
+      (u: unknown) => applySegmentProxyPreference(u) as string
+    ),
+  };
 }
 
 function PlayPageClient() {
@@ -3322,7 +3338,7 @@ function PlayPageClient() {
       setVideoCover(detailData.poster);
       // 优先保留URL参数中的豆瓣ID，如果URL中没有则使用详情数据中的
       setVideoDoubanId(videoDoubanIdRef.current || detailData.douban_id || 0);
-      setDetail(detailData);
+      setDetail(applyPlaybackPreference(detailData));
       if (currentEpisodeIndex >= detailData.episodes.length) {
         setCurrentEpisodeIndex(0);
       }
@@ -3601,7 +3617,7 @@ function PlayPageClient() {
       setVideoDoubanId(videoDoubanIdRef.current || detailToUse.douban_id || 0);
       setCurrentSource(newSource);
       setCurrentId(newId);
-      setDetail(detailToUse);
+      setDetail(applyPlaybackPreference(detailToUse));
 
       // 🔥 只有当集数确实改变时才调用 setCurrentEpisodeIndex
       // 这样可以避免触发不必要的 useEffect 和集数切换逻辑

@@ -28,6 +28,7 @@ const CustomAdFilterConfig = ({ config, refreshConfig }: CustomAdFilterConfigPro
     serverAdFilterMaxRemoveRatio: 0.5,
     forceProxyPlayback: false,
     proxyPlaybackAllowCORS: false,
+    proxyPlaybackMode: 'follow' as 'follow' | 'relay' | 'direct',
   });
 
   // 从config加载设置
@@ -46,6 +47,11 @@ const CustomAdFilterConfig = ({ config, refreshConfig }: CustomAdFilterConfigPro
             : 0.5,
         forceProxyPlayback: config.SiteConfig.ForceProxyPlayback === true,
         proxyPlaybackAllowCORS: config.SiteConfig.ProxyPlaybackAllowCORS === true,
+        proxyPlaybackMode:
+          config.SiteConfig.ProxyPlaybackMode === 'relay' ||
+          config.SiteConfig.ProxyPlaybackMode === 'direct'
+            ? config.SiteConfig.ProxyPlaybackMode
+            : 'follow',
       });
     }
   }, [config]);
@@ -75,7 +81,9 @@ const CustomAdFilterConfig = ({ config, refreshConfig }: CustomAdFilterConfigPro
           ServerAdFilterLive: serverSettings.serverAdFilterLive,
           ServerAdFilterMaxRemoveRatio: serverSettings.serverAdFilterMaxRemoveRatio,
           ForceProxyPlayback: serverSettings.forceProxyPlayback,
-          ProxyPlaybackAllowCORS: serverSettings.proxyPlaybackAllowCORS,
+          ProxyPlaybackMode: serverSettings.proxyPlaybackMode,
+          // 旧字段留着给回滚用：直连时保持为 true
+          ProxyPlaybackAllowCORS: serverSettings.proxyPlaybackMode === 'direct',
         }
       };
 
@@ -293,20 +301,43 @@ function filterAdsFromM3U8(type, m3u8Content) {
               </span>
             </label>
 
-            <label className='flex items-start gap-2 mb-2 cursor-pointer'>
-              <input
-                type='checkbox'
-                checked={serverSettings.proxyPlaybackAllowCORS}
-                onChange={(e) => setServerSettings({ ...serverSettings, proxyPlaybackAllowCORS: e.target.checked })}
-                className='mt-0.5 w-4 h-4 text-purple-600 rounded'
-              />
-              <span>
-                只代理播放列表、分片直连
-                <span className='block text-xs text-purple-700 dark:text-purple-300'>
-                  省带宽，但要求上游分片允许跨域；电视端原生播放器通常没问题
-                </span>
-              </span>
-            </label>
+            <div className='mt-2 mb-2'>
+              <p className='font-medium mb-2'>视频分片怎么走（优先级高于网页端设置）</p>
+              {([
+                {
+                  value: 'follow',
+                  title: '跟随网页端设置（推荐）',
+                  desc: '用户在网页「设置 → 分片全量中转」里自己选，默认全量中转',
+                },
+                {
+                  value: 'relay',
+                  title: '强制全量中转',
+                  desc: '分片一律经本站转发：任何网络、任何设备都稳定，去广告最彻底；视频流量经过服务器',
+                },
+                {
+                  value: 'direct',
+                  title: '强制分片直连',
+                  desc: '清单仍由本站过滤，分片由播放器直连源站：省服务器带宽，但受播放器网络到源站影响',
+                },
+              ] as const).map((opt) => (
+                <label key={opt.value} className='flex items-start gap-2 mb-2 cursor-pointer'>
+                  <input
+                    type='radio'
+                    name='proxyPlaybackMode'
+                    checked={serverSettings.proxyPlaybackMode === opt.value}
+                    onChange={() => setServerSettings({ ...serverSettings, proxyPlaybackMode: opt.value })}
+                    className='mt-0.5 w-4 h-4 text-purple-600'
+                  />
+                  <span>
+                    {opt.title}
+                    <span className='block text-xs text-purple-700 dark:text-purple-300'>{opt.desc}</span>
+                  </span>
+                </label>
+              ))}
+              <p className='text-xs text-purple-700 dark:text-purple-300 mt-1'>
+                提示：即便选了全量中转，本站取不到源站时也会自动退回让播放器直连，不会卡死。
+              </p>
+            </div>
 
             <div className='mt-3'>
               <label className='block text-xs font-medium mb-1'>

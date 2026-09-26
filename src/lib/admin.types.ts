@@ -37,7 +37,15 @@ export interface AdminConfig {
     ServerAdFilterMaxRemoveRatio?: number; // 单列表最多允许删除的分片占比，默认 0.5
     // 对外输出的播放地址统一改写成"本站 m3u8 代理"，让非网页端也能拿到过滤后的列表
     ForceProxyPlayback?: boolean; // 默认 false
-    ProxyPlaybackAllowCORS?: boolean; // true 时只代理清单、分片直连（省带宽），默认 false
+    ProxyPlaybackAllowCORS?: boolean; // 旧开关：true 时只代理清单、分片直连（省带宽）
+    /**
+     * 视频分片怎么走（优先级高于客户端网页设置）
+     * - follow（默认）：跟随网页端"全量中转"开关；没设置就按 relay
+     * - relay：强制全量中转，分片一律经 /api/proxy/segment，最稳、去广告最可靠，流量过本站
+     * - direct：强制分片直连源站，省服务器带宽，但受播放器到源站网络影响
+     * 未配置该字段时沿用旧的 ProxyPlaybackAllowCORS 行为。
+     */
+    ProxyPlaybackMode?: 'follow' | 'relay' | 'direct';
     // 默认用户组
     DefaultUserTags?: string[];
   };

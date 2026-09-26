@@ -12,6 +12,7 @@ import { memo, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 import { UserEmbyConfig } from './UserEmbyConfig';
+import { readSegmentProxyPreference, writeSegmentProxyPreference } from '@/lib/playback-mode';
 import { useEmbyConfigQuery } from '@/hooks/useUserMenuQueries';
 
 interface SettingsPanelProps {
@@ -81,10 +82,10 @@ function getThanksInfo(dataSource: string) {
   }
 }
 
-const Toggle = memo(({ checked, onChange }: { checked: boolean; onChange: (v: boolean) => void }) => (
-  <label className='flex items-center cursor-pointer'>
+const Toggle = memo(({ checked, onChange, disabled = false }: { checked: boolean; onChange: (v: boolean) => void; disabled?: boolean }) => (
+  <label className={`flex items-center ${disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>
     <div className='relative'>
-      <input type='checkbox' className='sr-only peer' checked={checked} onChange={e => onChange(e.target.checked)} />
+      <input type='checkbox' className='sr-only peer' checked={checked} disabled={disabled} onChange={e => onChange(e.target.checked)} />
       <div className='w-11 h-6 bg-gray-300 rounded-full peer-checked:bg-green-500 transition-colors dark:bg-gray-600'></div>
       <div className='absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform peer-checked:translate-x-5'></div>
     </div>
@@ -110,6 +111,9 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
   const [enableAutoNextEpisode, setEnableAutoNextEpisode] = useState(true);
   const [requireClearConfirmation, setRequireClearConfirmation] = useState(false);
   const [downloadFormat, setDownloadFormat] = useState<'TS' | 'MP4'>('MP4');
+  const [segmentProxy, setSegmentProxy] = useState<'relay' | 'direct'>('relay');
+  // 后台统一策略（follow 时本开关才说了算）
+  const [serverProxyMode, setServerProxyMode] = useState<string>('follow');
   const [exactSearch, setExactSearch] = useState(true);
   const [isDoubanDropdownOpen, setIsDoubanDropdownOpen] = useState(false);
   const [isDoubanImageProxyDropdownOpen, setIsDoubanImageProxyDropdownOpen] = useState(false);
@@ -151,6 +155,19 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     const es = localStorage.getItem('exactSearch');
     if (es !== null) setExactSearch(es === 'true');
     setPlayerBufferMode(readLS('playerBufferMode', 'enhanced'));
+    setSegmentProxy(readSegmentProxyPreference());
+
+    // 后台策略优先：读回来只是为了在界面上告诉用户"这个开关现在作不作数"
+    fetch('/api/server-config')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && typeof d.ProxyPlaybackMode === 'string') {
+          setServerProxyMode(d.ProxyPlaybackMode);
+        }
+      })
+      .catch(() => {
+        /* 拿不到就按跟随客户端处理 */
+      });
   }, []);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -176,6 +193,12 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
   const handleBangumiImageProxyTypeChange = (v: string) => { setBangumiImageProxyType(v); localStorage.setItem('bangumiImageProxyType', v); };
   const handleBangumiImageProxyUrlChange = (v: string) => { setBangumiImageProxyUrl(v); localStorage.setItem('bangumiImageProxyUrl', v); };
   const handleBufferModeChange = (v: 'standard' | 'enhanced' | 'max') => { setPlayerBufferMode(v); localStorage.setItem('playerBufferMode', v); };
+  const handleSegmentProxyToggle = (v: boolean) => {
+    const next: 'relay' | 'direct' = v ? 'relay' : 'direct';
+    setSegmentProxy(next);
+    writeSegmentProxyPreference(next);
+    window.dispatchEvent(new Event('localStorageChanged'));
+  };
   const handleContinueWatchingMinProgressChange = (v: number) => { setContinueWatchingMinProgress(v); localStorage.setItem('continueWatchingMinProgress', v.toString()); };
   const handleContinueWatchingMaxProgressChange = (v: number) => { setContinueWatchingMaxProgress(v); localStorage.setItem('continueWatchingMaxProgress', v.toString()); };
   const handleEnableContinueWatchingFilterToggle = set(setEnableContinueWatchingFilter, 'enableContinueWatchingFilter');
@@ -218,6 +241,7 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     setEnableAutoSkip(true);
     setEnableAutoNextEpisode(true);
     setPlayerBufferMode('enhanced');
+    setSegmentProxy('relay');
     setDownloadFormat('MP4');
 
     localStorage.setItem('defaultAggregateSearch', JSON.stringify(true));
@@ -240,6 +264,7 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     localStorage.setItem('requireClearConfirmation', JSON.stringify(false));
     localStorage.setItem('playerBufferMode', 'enhanced');
     localStorage.setItem('downloadFormat', 'MP4');
+    writeSegmentProxyPreference('relay');
   };
 
   if (!isOpen) return null;
@@ -596,6 +621,29 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
                 <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>开启 IPTV 视频浏览器直连时，需要自备 Allow CORS 插件</p>
               </div>
               <Toggle checked={liveDirectConnect} onChange={handleLiveDirectConnectToggle} />
+            </div>
+
+            <div className='border-t border-gray-200 dark:border-gray-700'></div>
+
+            {/* 分片全量中转 */}
+            <div className='flex items-center justify-between'>
+              <div className='flex-1 pr-4'>
+                <h4 className='text-sm font-medium text-gray-700 dark:text-gray-300'>分片全量中转（稳定优先）</h4>
+                <p className='text-xs text-gray-500 dark:text-gray-400 mt-1'>
+                  开启：视频分片全部经本站转发，播放器只需连得上本站，任何网络都稳定，去广告也最彻底，代价是流量经过服务器。
+                  关闭：分片由播放器直连源站，省服务器带宽，但受你本地网络到源站的影响
+                </p>
+                {serverProxyMode !== 'follow' && (
+                  <p className='text-xs text-amber-600 dark:text-amber-400 mt-1'>
+                    后台已统一设置为「{serverProxyMode === 'relay' ? '全量中转' : '分片直连'}」，此处开关暂不生效
+                  </p>
+                )}
+              </div>
+              <Toggle
+                checked={serverProxyMode === 'follow' ? segmentProxy === 'relay' : serverProxyMode === 'relay'}
+                onChange={handleSegmentProxyToggle}
+                disabled={serverProxyMode !== 'follow'}
+              />
             </div>
 
             <div className='border-t border-gray-200 dark:border-gray-700'></div>

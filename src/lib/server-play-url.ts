@@ -22,6 +22,51 @@ const M3U8_RE = /\.m3u8(\?|#|$)/i;
 const PRIVATE_HOST_RE =
   /^(?:127\.[\d.]+|10\.[\d.]+|192\.168\.[\d.]+|172\.(?:1[6-9]|2\d|3[01])\.[\d.]+|0\.0\.0\.0|localhost|\[::1\])(?::\d+)?$/i;
 
+export type SegmentProxyMode = 'relay' | 'direct';
+
+/**
+ * 决定这一次播放的"视频分片"怎么走。
+ *
+ * - `relay`：分片经本站 `/api/proxy/segment` 中转。稳定、去广告可靠，
+ *   播放器只需要连得上本站；代价是视频流量经过本站。
+ * - `direct`：清单仍由本站过滤后返回，分片由播放器直连源站。
+ *   省服务器带宽，但取决于播放器所在网络到源站是否通畅。
+ *
+ * 优先级（后台 > 客户端 > 兜底）：
+ * 1. 后台 SiteConfig.ProxyPlaybackMode = 'relay' / 'direct' 时，强制生效，
+ *    网页端自己怎么设都不管用；
+ * 2. 后台为 'follow'（默认）时，听 URL 里客户端带来的 `seg` 参数；
+ * 3. 客户端没表态：网页端按 relay（最易受本地网络影响，中转最稳），
+ *    TV / 手机 / 第三方播放器按 direct（它们本来就是这么跑的）。
+ */
+export function resolveSegmentProxyMode(opts: {
+  config?: any;
+  requested?: string | null;
+  isBrowser?: boolean;
+}): SegmentProxyMode {
+  const { config, requested, isBrowser } = opts;
+  const rawMode = config?.SiteConfig?.ProxyPlaybackMode;
+  const pref: SegmentProxyMode | null =
+    requested === 'direct' ? 'direct' : requested === 'relay' ? 'relay' : null;
+
+  if (rawMode === 'relay') return 'relay';
+  if (rawMode === 'direct') return 'direct';
+
+  // 旧配置（没有 ProxyPlaybackMode）沿用 ProxyPlaybackAllowCORS：
+  // 那时只有非浏览器客户端才允许分片直连，浏览器直连会被 CORS 拦。
+  if (rawMode !== 'follow') {
+    if (config?.SiteConfig?.ProxyPlaybackAllowCORS !== true) return 'relay';
+    return isBrowser ? 'relay' : 'direct';
+  }
+
+  // 都没明确指定时的兜底：
+  // - 网页端（浏览器）：全量中转。它最容易被本地网络到源站的连通性拖累，中转最稳；
+  // - TV / 手机 / 第三方播放器：分片直连，沿用它们本来就跑得通的方式，也省服务器带宽。
+  if (!pref) return isBrowser ? 'relay' : 'direct';
+
+  return pref;
+}
+
 export function shouldForceProxyPlayback(config: any): boolean {
   return config?.SiteConfig?.ForceProxyPlayback === true;
 }
@@ -149,13 +194,11 @@ export function wrapPlayUrlWithProxy(
   if (!M3U8_RE.test(url)) return url; // 只处理 m3u8，mp4 等直链不动
   if (url.includes('/api/proxy/m3u8')) return url; // 已改写过，避免套娃
 
-  const allowCORS = config?.SiteConfig?.ProxyPlaybackAllowCORS === true;
+  // 注意：这里**不预先决定**分片该直连还是中转。真正的判定放在 /api/proxy/m3u8
+  // （见 resolveSegmentProxyMode），因为那里才拿得到请求头和客户端偏好，
+  // 能保证后台策略、客户端设置、旧 allowCORS 参数三者的优先级一致。
   const base = normalizeOrigin(origin);
-  // allowCORS 只在非浏览器客户端生效（见 api/proxy/m3u8 route）：
-  // 源站分片大多没有 CORS 头，浏览器直连会被拦，所以网页端固定走同源分片代理。
-  return `${base}/api/proxy/m3u8?url=${encodeURIComponent(url)}${
-    allowCORS ? '&allowCORS=true' : ''
-  }`;
+  return `${base}/api/proxy/m3u8?url=${encodeURIComponent(url)}`;
 }
 
 /**
