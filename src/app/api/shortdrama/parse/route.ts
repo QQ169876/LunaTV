@@ -5,7 +5,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getCacheTime, getConfig } from '@/lib/config';
 import { parseShortDramaEpisode } from '@/lib/shortdrama.client';
 import { recordRequest, getDbQueryCount, resetDbQueryCount } from '@/lib/performance-monitor';
-import { isBrowserRequest, wrapParsedUrlWithProxy } from '@/lib/server-play-url';
+import { wrapParsedUrlWithProxy } from '@/lib/server-play-url';
 
 // 标记为动态路由
 export const dynamic = 'force-dynamic';
@@ -118,12 +118,7 @@ export async function GET(request: NextRequest) {
 
     // 🧹 服务端去广告：短剧解析出的真实地址同样改写成走本站代理
     try {
-      wrapParsedUrlWithProxy(
-        response,
-        await getConfig(),
-        new URL(request.url).origin,
-        isBrowserRequest(request)
-      );
+      wrapParsedUrlWithProxy(response, await getConfig(), request);
     } catch {
       // 改写失败不影响正常返回
     }

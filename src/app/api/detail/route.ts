@@ -4,7 +4,7 @@ import { getAuthInfoFromCookie } from '@/lib/auth';
 import { getAvailableApiSites, getCacheTime, getConfig } from '@/lib/config';
 import { getDetailFromApi, searchFromApi } from '@/lib/downstream';
 import { recordRequest, getDbQueryCount, resetDbQueryCount } from '@/lib/performance-monitor';
-import { isBrowserRequest, wrapEpisodesWithProxy } from '@/lib/server-play-url';
+import { wrapEpisodesWithProxy } from '@/lib/server-play-url';
 
 export const runtime = 'nodejs';
 
@@ -311,17 +311,12 @@ export async function GET(request: NextRequest) {
     }
 
     // 🧹 服务端去广告：把剧集地址改写成本站 m3u8 代理，
-    // 这样 TV / 手机等不走网页播放器的客户端拿到的也是过滤后的列表。
+    // 这样网页端、TV / 手机、第三方播放器拿到的都是过滤后的列表。
     // 默认关闭（ForceProxyPlayback），开启后视频流量会经过本站。
-    // 输出绝对地址：第三方客户端不一定会补全相对路径的域名。
-    // 网页端（浏览器）跳过改写：它有自己的 hls.js 去广告，且分片直连源站会被 CORS 拦。
+    // 输出绝对地址：第三方客户端不一定会补全相对路径的域名；
+    // 域名解析不到（内网直连）时自动退化成相对地址。
     try {
-      wrapEpisodesWithProxy(
-        result,
-        await getConfig(),
-        new URL(request.url).origin,
-        isBrowserRequest(request)
-      );
+      wrapEpisodesWithProxy(result, await getConfig(), request);
     } catch {
       // 改写失败不影响正常返回
     }
