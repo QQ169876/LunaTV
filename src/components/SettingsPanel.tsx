@@ -96,10 +96,10 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
   // ── Settings state (localStorage-backed) ──────────────────────────────────
   const [defaultAggregateSearch, setDefaultAggregateSearch] = useState(true);
   const [doubanProxyUrl, setDoubanProxyUrl] = useState('');
-  const [enableOptimization, setEnableOptimization] = useState(false);
+  const [enableOptimization, setEnableOptimization] = useState(true);
   const [fluidSearch, setFluidSearch] = useState(true);
   const [liveDirectConnect, setLiveDirectConnect] = useState(false);
-  const [playerBufferMode, setPlayerBufferMode] = useState<'standard' | 'enhanced' | 'max'>('standard');
+  const [playerBufferMode, setPlayerBufferMode] = useState<'standard' | 'enhanced' | 'max'>('enhanced');
   const [doubanDataSource, setDoubanDataSource] = useState('direct');
   const [doubanImageProxyType, setDoubanImageProxyType] = useState('direct');
   const [doubanImageProxyUrl, setDoubanImageProxyUrl] = useState('');
@@ -109,7 +109,7 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
   const [enableAutoSkip, setEnableAutoSkip] = useState(true);
   const [enableAutoNextEpisode, setEnableAutoNextEpisode] = useState(true);
   const [requireClearConfirmation, setRequireClearConfirmation] = useState(false);
-  const [downloadFormat, setDownloadFormat] = useState<'TS' | 'MP4'>('TS');
+  const [downloadFormat, setDownloadFormat] = useState<'TS' | 'MP4'>('MP4');
   const [exactSearch, setExactSearch] = useState(true);
   const [isDoubanDropdownOpen, setIsDoubanDropdownOpen] = useState(false);
   const [isDoubanImageProxyDropdownOpen, setIsDoubanImageProxyDropdownOpen] = useState(false);
@@ -129,7 +129,7 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     const RC = (window as any).RUNTIME_CONFIG || {};
 
     setDefaultAggregateSearch(readLS('defaultAggregateSearch', true));
-    setEnableOptimization(readLS('enableOptimization', false));
+    setEnableOptimization(readLS('enableOptimization', true));
     setFluidSearch(readLS('fluidSearch', RC.FLUID_SEARCH !== false));
     setLiveDirectConnect(readLS('liveDirectConnect', false));
     setDoubanProxyUrl(readLS('doubanProxyUrl', RC.DOUBAN_PROXY || ''));
@@ -150,7 +150,7 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     if (fmt === 'TS' || fmt === 'MP4') setDownloadFormat(fmt);
     const es = localStorage.getItem('exactSearch');
     if (es !== null) setExactSearch(es === 'true');
-    setPlayerBufferMode(readLS('playerBufferMode', 'standard'));
+    setPlayerBufferMode(readLS('playerBufferMode', 'enhanced'));
   }, []);
 
   // ── Handlers ──────────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     const defaultFluidSearch = RC.FLUID_SEARCH !== false;
 
     setDefaultAggregateSearch(true);
-    setEnableOptimization(false);
+    setEnableOptimization(true);
     setFluidSearch(defaultFluidSearch);
     setLiveDirectConnect(false);
     setDoubanProxyUrl(defaultDoubanProxy);
@@ -217,11 +217,11 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     setEnableContinueWatchingFilter(false);
     setEnableAutoSkip(true);
     setEnableAutoNextEpisode(true);
-    setPlayerBufferMode('standard');
-    setDownloadFormat('TS');
+    setPlayerBufferMode('enhanced');
+    setDownloadFormat('MP4');
 
     localStorage.setItem('defaultAggregateSearch', JSON.stringify(true));
-    localStorage.setItem('enableOptimization', JSON.stringify(false));
+    localStorage.setItem('enableOptimization', JSON.stringify(true));
     localStorage.setItem('fluidSearch', JSON.stringify(defaultFluidSearch));
     localStorage.setItem('liveDirectConnect', JSON.stringify(false));
     localStorage.setItem('doubanProxyUrl', defaultDoubanProxy);
@@ -238,8 +238,8 @@ export const SettingsPanel = memo(({ isOpen, onClose }: SettingsPanelProps) => {
     localStorage.setItem('enableAutoSkip', JSON.stringify(true));
     localStorage.setItem('enableAutoNextEpisode', JSON.stringify(true));
     localStorage.setItem('requireClearConfirmation', JSON.stringify(false));
-    localStorage.setItem('playerBufferMode', 'standard');
-    localStorage.setItem('downloadFormat', 'TS');
+    localStorage.setItem('playerBufferMode', 'enhanced');
+    localStorage.setItem('downloadFormat', 'MP4');
   };
 
   if (!isOpen) return null;

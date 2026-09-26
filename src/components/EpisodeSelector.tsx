@@ -204,7 +204,7 @@ const EpisodeSelector: React.FC<EpisodeSelectorProps> = ({
         }
       }
     }
-    return false;
+    return true;
   });
 
   // 手动测速函数

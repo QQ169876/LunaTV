@@ -440,8 +440,8 @@ function PlayPageClient() {
   const getHlsBufferConfig = () => {
     const mode =
       typeof window !== 'undefined'
-        ? localStorage.getItem('playerBufferMode') || 'standard'
-        : 'standard';
+        ? localStorage.getItem('playerBufferMode') || 'enhanced'
+        : 'enhanced';
 
     switch (mode) {
       case 'enhanced':
@@ -969,7 +969,7 @@ function PlayPageClient() {
         }
       }
     }
-    return false;
+    return true;
   });
 
   // 保存优选时的测速结果，避免EpisodeSelector重复测速
