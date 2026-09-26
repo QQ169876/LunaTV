@@ -160,7 +160,7 @@ docker run -d --name moontv --restart always -p 3000:3000 \
 访问 `http://localhost:3000`，登录后到「管理员后台 → 去广告」打开开关即可生效；
 想让 TV / 第三方播放器也走服务端过滤，再打开「对外播放地址改写为本站代理」。
 
-可用标签：`latest`（最新）、`adfilter-latest`、`6.6.4-adfilter-209e9b7`（锁死版本）。
+可用标签：`latest`（最新）、`adfilter-latest`、`6.6.4-adfilter-bb1f76b`（锁死版本）。
 
 发布页（含离线镜像包、完整更新说明）：<https://github.com/QQ169876/LunaTV/releases>
 完整说明（离线包、自建镜像、如何同步上游）见 [ADFILTER_DOCKER.md](docs/advanced/ADFILTER_DOCKER.md)。
