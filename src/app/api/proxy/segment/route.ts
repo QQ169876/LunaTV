@@ -64,6 +64,14 @@ export async function GET(request: Request) {
     ua = liveSource.ua || ua;
   }
 
+  // 上游原始地址（服务端取不到时用于降级为"播放器直连"）
+  let rawTarget = '';
+  try {
+    rawTarget = decodeURIComponent(url);
+  } catch {
+    rawTarget = '';
+  }
+
   let response: Response | null = null;
   let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
   const controller = new AbortController();
@@ -307,6 +315,12 @@ export async function GET(request: Request) {
       } catch (e) {
         // 忽略错误
       }
+    }
+
+    // 🆘 降级：本机连不上分片源站（源站封海外 IP / DNS 指向黑洞），
+    // 把原始地址交还给播放器由它自己去直连，避免一直卡在缓冲。
+    if (rawTarget && /^https?:\/\//i.test(rawTarget)) {
+      return NextResponse.redirect(rawTarget, 302);
     }
 
     // 处理不同类型的错误

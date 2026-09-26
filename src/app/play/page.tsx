@@ -2805,11 +2805,13 @@ function PlayPageClient() {
           ) {
             // 如果是m3u8文件，处理内容以移除广告分段
             if (response.data && typeof response.data === 'string') {
-              // 地址指向本站代理时（服务端已经过滤过一遍），不要再在浏览器里重复过滤，
+              // 地址实际由本站代理返回时（服务端已经过滤过一遍），不要再在浏览器里重复过滤，
               // 避免两道规则叠加把正常分片删掉。
-              const reqUrl = (context as any)?.url || '';
+              // 取 stats.url（重定向后的最终地址）而非请求地址：服务端连不上源站时会 302
+              // 把原始地址交还给播放器，此时拿到的清单未经服务端处理，需要在浏览器端补过滤。
+              const finalUrl = (stats as any)?.url || (context as any)?.url || '';
               const viaServerProxy =
-                typeof reqUrl === 'string' && reqUrl.includes('/api/proxy/m3u8');
+                typeof finalUrl === 'string' && finalUrl.includes('/api/proxy/m3u8');
               if (!viaServerProxy) {
                 // 过滤掉广告段 - 实现更精确的广告过滤逻辑
                 response.data = filterAdsFromM3U8(response.data);

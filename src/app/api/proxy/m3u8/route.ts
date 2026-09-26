@@ -116,10 +116,18 @@ export async function GET(request: Request) {
     ua = liveSource.ua || ua;
   }
 
+  // 上游原始地址（服务端取不到时用于降级为"播放器直连"）
+  let rawTarget = '';
+  try {
+    rawTarget = decodeURIComponent(url);
+  } catch {
+    rawTarget = '';
+  }
+
   let response: Response | null = null;
   let responseUsed = false;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 15000); // 15秒超时
+  const timeoutId = setTimeout(() => controller.abort(), 12000); // 12秒超时（超时后降级为播放器直连）
 
   try {
     const decodedUrl = decodeURIComponent(url);
@@ -283,11 +291,19 @@ export async function GET(request: Request) {
     stats.errors++;
     clearTimeout(timeoutId);
     
+    // 🆘 降级：本机连不上上游（最常见的原因是源站封了海外 IP，
+    // 典型表现是把域名解析到 127.0.0.1 或直接丢包），与其让播放器无限转圈，
+    // 不如把原始地址交还给播放器，由它自己所在的网络去直连。
+    // 这些视频源普遍带 Access-Control-Allow-Origin: *，浏览器/播放器直连不受跨域限制。
+    if (rawTarget && /^https?:\/\//i.test(rawTarget)) {
+      return NextResponse.redirect(rawTarget, 302);
+    }
+
     // 处理不同类型的错误
     if (error.name === 'AbortError') {
       return NextResponse.json({ error: 'Request timeout' }, { status: 408 });
     }
-    
+
     if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
       return NextResponse.json({ error: 'Network connection failed' }, { status: 503 });
     }
@@ -295,7 +311,7 @@ export async function GET(request: Request) {
     if (process.env.NODE_ENV === 'development') {
       console.error('M3U8 proxy error:', error);
     }
-    return NextResponse.json({ 
+    return NextResponse.json({
       error: 'Failed to fetch m3u8',
       details: process.env.NODE_ENV === 'development' ? error.message : undefined
     }, { status: 500 });
